@@ -9,17 +9,50 @@ Workflow, planning, review, and day-to-day engineering discipline.
 **Install the whole set (interactive picker):**
 
 ```bash
-npx skills add mattpocock/skills
+npx skills@latest add mattpocock/skills
 ```
 
 **Install a single skill:**
 
 ```bash
-npx skills add mattpocock/skills@<skill-name>
-# e.g. npx skills add mattpocock/skills@grill-me
+npx skills@latest add mattpocock/skills@<skill-name>
+# e.g. npx skills@latest add mattpocock/skills@grill-me
 ```
 
-Browse: [github.com/mattpocock/skills](https://github.com/mattpocock/skills) · [aihero.dev/skills](https://aihero.dev/skills)
+Browse: [github.com/mattpocock/skills](https://github.com/mattpocock/skills) · [aihero.dev/skills](https://aihero.dev/skills) · [Releases](https://github.com/mattpocock/skills/releases) · [skills.sh](https://skills.sh/mattpocock/skills)
+
+### Releases & self-updating plugin
+
+The repo is **versioned** — see [Releases](https://github.com/mattpocock/skills/releases) (semver tags `v1.x.y`, latest **`v1.3.1`**). Each release carries a full changelog with **Major / Minor / Patch** sections and explicit **Breaking** callouts (e.g. new `codebase-design` / `domain-modeling` dependencies, removed skills), so you can see exactly what changed before pulling.
+
+There are **two install paths — pick one per agent**, or you'll get every skill twice:
+
+| Method | Updates | Best for |
+|--|--|--|
+| **Plugin** | Updates itself | Claude Code, Codex, Copilot |
+| **`npx skills`** (this repo's default) | Manual — `npx skills@latest update` | Cursor, OpenCode, DevIn, Windsurf, Amp, Pi, or editable files |
+
+**Plugin installs (self-updating):**
+
+```bash
+# Claude Code (official marketplace)
+claude plugin install mattpocock-skills@claude-plugins-official
+
+# Codex
+codex plugin marketplace add mattpocock/skills
+codex plugin add mattpocock-skills@mattpocock
+
+# GitHub Copilot (CLI + VS Code)
+copilot plugin marketplace add mattpocock/skills
+copilot plugin install mattpocock-skills@mattpocock
+# then add mattpocock to extraKnownMarketplaces in ~/.copilot/settings.json with "autoUpdate": true
+
+# Gemini CLI (manual re-run to update)
+gemini skills install https://github.com/mattpocock/skills.git --path skills/engineering
+gemini skills install https://github.com/mattpocock/skills.git --path skills/productivity
+```
+
+> When the installer asks which skills to take, **include `setup-matt-pocock-skills`** — run it once per repo to wire up your issue tracker, triage labels, and docs location. Full setup details in the [README](https://github.com/mattpocock/skills#installation-30-second-setup).
 
 Highlights: `grill-me` · `grilling` · `grill-with-docs` · `code-review` · `pr` · `tdd` · `implement` · `implement-spec` · `to-spec` · `to-tickets` · `triage` · `handoff` · `teach` · `wait-what` · `wayfinder` · `wizard` · `codebase-design` · `domain-modeling` · `diagnosing-bugs` · `research` · `retro` · `chief-of-staff` · `writing-for-agents`
 

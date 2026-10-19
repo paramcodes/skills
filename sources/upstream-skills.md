@@ -4,7 +4,7 @@ Every community skill referenced in [`catalog/`](../catalog), mapped to its cano
 
 | Collection / skill | Upstream repo | Category | Install |
 |---|---|---|---|
-| Matt Pocock skills | [mattpocock/skills](https://github.com/mattpocock/skills) | engineering | `npx skills add mattpocock/skills` |
+| Matt Pocock skills | [mattpocock/skills](https://github.com/mattpocock/skills) ([Releases](https://github.com/mattpocock/skills/releases)) | engineering | `npx skills@latest add mattpocock/skills` **or** self-updating plugin `claude plugin install mattpocock-skills@claude-plugins-official` (pick one per agent) |
 | Caveman | [juliusbrussee/caveman](https://github.com/juliusbrussee/caveman) | engineering | `npx skills add juliusbrussee/caveman` |
 | Emil Kowalski skills | [emilkowalski/skills](https://github.com/emilkowalski/skills) | design & motion | `npx skills add emilkowalski/skills` |
 | impeccable | [pbakaus/impeccable](https://github.com/pbakaus/impeccable) | design & motion | `npx skills add pbakaus/impeccable` |
