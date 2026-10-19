@@ -1,6 +1,11 @@
 ---
 name: productionize
-description: Take a tutorial-quality web app to production quality: tooling, tests, design system, performance ledger, accessibility, SEO, persistence, docs. Use for "productionize this", "level up this project", "make this production-ready", "harden this project", "what's missing from a production app", "upgrade from tutorial quality", or auditing a project's engineering baseline.
+description: >-
+  Take a tutorial-quality web app to production quality: tooling, tests, design
+  system, performance ledger, accessibility, SEO, persistence, docs. Use for
+  "productionize this", "level up this project", "make this production-ready",
+  "harden this project", "what's missing from a production app", "upgrade from
+  tutorial quality", or auditing a project's engineering baseline.
 ---
 
 # Productionize
