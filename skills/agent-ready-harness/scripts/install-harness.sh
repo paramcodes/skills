@@ -139,6 +139,62 @@ case "$pm" in
     ;;
 esac
 
+# The second language toolchain. A repository with two languages holds both of
+# them to a gate, and the gate needs its toolchain on the machine that runs it.
+detect_toolchain() {
+  if [ -f "$repo/pyproject.toml" ] || [ -f "$repo/setup.py" ] || [ -f "$repo/requirements.txt" ]; then
+    echo python
+  elif [ -f "$repo/Cargo.toml" ]; then
+    echo rust
+  elif [ -f "$repo/go.mod" ]; then
+    echo go
+  elif [ -f "$repo/Gemfile" ]; then
+    echo ruby
+  else
+    echo ""
+  fi
+}
+
+# The setup step that puts the toolchain on the machine that runs the gates.
+toolchain_setup_steps() {
+  case "$1" in
+    rust)
+      echo "      - uses: dtolnay/rust-toolchain@stable"
+      ;;
+    go)
+      echo "      - uses: actions/setup-go@v5
+        with:
+          go-version: stable"
+      ;;
+    python)
+      echo "      - uses: actions/setup-python@v5
+        with:
+          python-version: \"3.x\""
+      ;;
+    ruby)
+      echo "      - uses: ruby/setup-ruby@v1"
+      ;;
+  esac
+}
+
+# The browsers the end-to-end job needs. A repository that drives a browser
+# needs its browsers on the machine that runs the suite.
+browser_steps=""
+if [ -n "$(read_json devDependencies.playwright)" ] || [ -n "$(read_json "devDependencies.@playwright/test")" ]; then
+  browser_steps="      - name: Install the browsers
+        run: node_modules/.bin/playwright install --with-deps"
+fi
+
+toolchain="$(detect_toolchain)"
+toolchain_setup=""
+if [ -n "$toolchain" ]; then
+  toolchain_setup="$(toolchain_setup_steps "$toolchain")"
+  if [ -n "$toolchain_setup" ]; then
+    setup_steps="$setup_steps
+$toolchain_setup"
+  fi
+fi
+
 # The end-to-end command drives the app, so the behavioural criterion has
 # something to run. The canonical name is test:e2e. A repository that calls the
 # same suite something else gets an alias, so the criterion and the workflow
@@ -160,10 +216,11 @@ fi
 render() {
   node -e '
     const fs = require("fs");
-    const [source, target, project, pm, pmExec, setup, install, e2e] = process.argv.slice(1);
+    const [source, target, project, pm, pmExec, setup, install, e2e, browsers] = process.argv.slice(1);
     let content = fs.readFileSync(source, "utf8");
     content = content
       .replace(/^[ \t]*# @@SETUP@@$/gm, () => setup.trimEnd())
+      .replace(/^[ \t]*# @@BROWSERS@@$/gm, () => browsers.trimEnd())
       .split("@@PROJECT@@").join(project)
       .split("@@INSTALL@@").join(install)
       .split("@@E2E@@").join(e2e)
@@ -172,7 +229,7 @@ render() {
       .split("{{PM_EXEC}}").join(pmExec)
       .split("{{PM}}").join(pm);
     fs.writeFileSync(target, content);
-  ' "$1" "$2" "$project" "$pm" "$pm_exec" "$setup_steps" "$install_command" "$e2e_command"
+  ' "$1" "$2" "$project" "$pm" "$pm_exec" "$setup_steps" "$install_command" "$e2e_command" "$browser_steps"
 }
 
 installed_files=()
@@ -341,22 +398,6 @@ if [ "$dry_run" -eq 0 ]; then
   printf 'patch   package.json scripts: harness, prove, prove-harness, arch, and the yaml dependency\n'
 fi
 
-# The second toolchain. A repository with two languages holds both of them to a
-# gate, and the criterion set says so.
-detect_toolchain() {
-  if [ -f "$repo/pyproject.toml" ] || [ -f "$repo/setup.py" ] || [ -f "$repo/requirements.txt" ]; then
-    echo python
-  elif [ -f "$repo/Cargo.toml" ]; then
-    echo rust
-  elif [ -f "$repo/go.mod" ]; then
-    echo go
-  elif [ -f "$repo/Gemfile" ]; then
-    echo ruby
-  else
-    echo ""
-  fi
-}
-
 toolchain_gate() {
   case "$1" in
     python)
@@ -378,7 +419,6 @@ toolchain_gate() {
   echo ""
 }
 
-toolchain="$(detect_toolchain)"
 toolchain_gate_command=""
 toolchain_gate_display=""
 toolchain_why=""
@@ -620,7 +660,7 @@ if [ "$dry_run" -eq 0 ] && [ "$install_deps" -eq 1 ]; then
 fi
 
 missing_scripts=""
-for script in verify typecheck lint test:e2e; do
+for script in verify typecheck lint test:e2e build; do
   if [ -z "$(read_json "scripts.$script")" ]; then
     missing_scripts="$missing_scripts $script"
   fi
