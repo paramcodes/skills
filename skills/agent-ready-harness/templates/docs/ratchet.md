@@ -37,6 +37,12 @@ rerun it.
 A fix with no proof case is not done. The case is the artifact a reviewer runs, and a guardrail
 without one cannot be shown to catch the mistake it was made for.
 
+A proof case is content-pinned. The scorer holds a digest of every case, the hash of what the case
+writes, what it expects, and the criterion it breaks, so a case whose content changed without its
+digest changing fails the run. Editing a case to make it pass is not a fix, because the edited
+case proves nothing. Changing a case means moving its digest in the scorer in the same change, the
+way the name of a case is moved in the scorer and in the prover.
+
 ## Add a log row
 
 The new case becomes a row in `docs/mistake-log.md`, with the date, the mistake, the check that was
