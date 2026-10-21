@@ -134,7 +134,8 @@ the three steps.
 
 **Check:** the `documentSections` check parses the document and requires the named sections to
 exist as headings or as bolded section titles. The words appearing somewhere in the prose do not
-count.
+count. The three sections are `Fix at the strongest layer`, `Add a proof case`, and `Add a log
+row`.
 
 **Adapt:** keep the three steps. The layers listed inside them change with the stack.
 
@@ -144,7 +145,9 @@ count.
 that now catches it and the proof case that covers it.
 
 **Check:** the `logRows` check parses the table, requires at least one row, and requires each row
-to name a guardrail path that exists on disk. A log with a header and no row fails.
+to name a guardrail path that exists on disk. A log with a header and no row fails. The columns
+are the date, the mistake, the check that was missing, the fix, the guardrail, and the proof case
+that covers it.
 
 **Adapt:** copy the schema. The row count grows as the repo makes mistakes, and a row without a
 guardrail behind it is a hope rather than a rule.
