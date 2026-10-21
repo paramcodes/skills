@@ -96,6 +96,8 @@ const EXPECTED_PROOF_NAMES = [
   "the mistake log criterion fails when a row names no guardrail",
   "the mistake log criterion fails when a row names a guardrail that does not exist",
   "the entry point criterion fails when a rule names no kind",
+  "the scorer restores its probe when it is killed with a signal",
+  "the scorer repairs a tree that a killed run left dirty",
 ];
 
 if (!Number.isInteger(minimumProofs) || minimumProofs < 1) {

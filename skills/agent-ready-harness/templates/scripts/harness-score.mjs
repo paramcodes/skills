@@ -18,21 +18,35 @@
  * a command criterion that stops running the command it is supposed to run
  * fails the score too.
  *
+ * The scorer writes probe files into the tree to run the linter, and it leaves
+ * the tree exactly as it found it, on every exit path: a normal run, a thrown
+ * error, an interrupt, a termination. A run that was killed outright cannot
+ * clean up after itself, so it leaves a journal outside the tree, and the next
+ * run restores the tree from that journal before it writes anything of its own.
+ * Only one run may own a tree at a time, so two runs cannot fight over the
+ * same probe file.
+ *
  * `node scripts/harness-score.mjs --only <criterion>` scores one criterion.
  */
 
-import { execSync } from "node:child_process";
+import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
+  closeSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
+  openSync,
   readFileSync,
   readdirSync,
+  renameSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -113,6 +127,8 @@ const EXPECTED_PROOF_NAMES = [
   "the mistake log criterion fails when a row names no guardrail",
   "the mistake log criterion fails when a row names a guardrail that does not exist",
   "the entry point criterion fails when a rule names no kind",
+  "the scorer restores its probe when it is killed with a signal",
+  "the scorer repairs a tree that a killed run left dirty",
 ];
 
 function expand(text, probe) {
@@ -151,27 +167,296 @@ function isNoopCommand(command) {
   return false;
 }
 
+/**
+ * The checker runs in a child process without blocking the event loop. A
+ * blocking call would swallow the interrupt that stops this script, which is
+ * the one signal the operator can always send.
+ */
+let runningChild = null;
+
 function run(command) {
-  try {
-    const stdout = execSync(expand(command), {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
+  return new Promise((resolve) => {
+    const child = spawn(expand(command), {
+      shell: true,
       cwd: root,
+      stdio: ["ignore", "pipe", "pipe"],
     });
-    return { code: 0, output: stdout };
-  } catch (error) {
-    const output = `${error.stdout ?? ""}${error.stderr ?? ""}`.trim();
-    return {
-      code: typeof error.status === "number" ? error.status : 1,
-      output,
-    };
-  }
+    runningChild = child;
+
+    let output = "";
+    child.stdout.on("data", (chunk) => {
+      output += chunk;
+    });
+    child.stderr.on("data", (chunk) => {
+      output += chunk;
+    });
+    child.on("error", (error) => {
+      if (runningChild === child) runningChild = null;
+      resolve({ code: 1, output: `${output}${error.message}`.trim() });
+    });
+    child.on("close", (code) => {
+      if (runningChild === child) runningChild = null;
+      resolve({
+        code: typeof code === "number" ? code : 1,
+        output: output.trim(),
+      });
+    });
+  });
 }
 
 function tail(text, lines = 6) {
   const rows = String(text).trim().split("\n");
   return rows.slice(-lines).join("\n");
 }
+
+/**
+ * The tree discipline.
+ *
+ * The scorer writes probe files into the tree to run the linter. The tree must
+ * be left exactly as it was found, on every exit path. The journal holds the
+ * state of the files the scorer is about to overwrite, and it lives outside the
+ * tree, so a run that was killed outright still leaves a record that the next
+ * run restores.
+ *
+ * The journal path and the lock path may be set with `HARNESS_JOURNAL_PATH` and
+ * `HARNESS_LOCK_PATH`, so a run that drives another run of the scorer does not
+ * fight with it over the tree.
+ */
+const treeHash = createHash("sha256").update(root).digest("hex").slice(0, 12);
+
+function treePath(kind) {
+  const override = process.env[`HARNESS_${kind}_PATH`];
+  if (override) {
+    return path.isAbsolute(override) ? override : path.join(root, override);
+  }
+  return path.join(
+    os.tmpdir(),
+    `harness-scorer-${kind}-${treeHash}.${kind === "lock" ? "lock" : "json"}`,
+  );
+}
+
+const journalPath = treePath("journal");
+
+/**
+ * The lock of the run.
+ *
+ * Two runs of the scorer on one tree fight over the same probe file, and the
+ * loser leaves a probe behind in the tree, which then fails the format check.
+ * The lock makes the tree the resource of one run: the second run waits for
+ * the first to finish and refuses when the wait runs out.
+ *
+ * The lock lives outside the tree, so a run that was killed outright cannot
+ * leave it in the repository. A lock whose owner is gone is broken, so a
+ * killed run never blocks the next one.
+ *
+ * The lock is not the lock of the prover. The scorer runs the prover, and the
+ * two must not wait for each other.
+ */
+const lockPath = treePath("lock");
+
+/** The milliseconds a run waits for the lock before it refuses to run. */
+const lockWaitMs = Number(process.env.HARNESS_LOCK_WAIT_MS ?? 120_000);
+
+/** The milliseconds after which a lock without a readable owner is stale. */
+const lockStaleMs = Number(process.env.HARNESS_LOCK_STALE_MS ?? 60_000);
+
+/** Sleeps without blocking the event loop for longer than it has to. */
+function sleep(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+/**
+ * True when the lock belongs to a process that is gone.
+ */
+function lockOwnerIsGone() {
+  let holder;
+  try {
+    holder = JSON.parse(readFileSync(lockPath, "utf8"));
+  } catch {
+    try {
+      return Date.now() - statSync(lockPath).mtimeMs > lockStaleMs;
+    } catch {
+      return true;
+    }
+  }
+
+  if (typeof holder?.pid !== "number") return false;
+  try {
+    process.kill(holder.pid, 0);
+    return false;
+  } catch (error) {
+    return error.code === "ESRCH";
+  }
+}
+
+/**
+ * Takes the lock of the tree.
+ */
+function acquireLock() {
+  const deadline = Date.now() + lockWaitMs;
+
+  for (;;) {
+    try {
+      const handle = openSync(lockPath, "wx");
+      try {
+        writeFileSync(
+          handle,
+          JSON.stringify({ pid: process.pid, startedAt: Date.now() }),
+        );
+      } finally {
+        closeSync(handle);
+      }
+      return true;
+    } catch (error) {
+      if (error.code !== "EEXIST") throw error;
+    }
+
+    if (lockOwnerIsGone()) {
+      const stalePath = `${lockPath}.stale-${process.pid}-${Date.now()}`;
+      try {
+        renameSync(lockPath, stalePath);
+        rmSync(stalePath, { force: true });
+      } catch {
+        // Another run broke the same lock first. It holds it now.
+      }
+      continue;
+    }
+
+    if (Date.now() >= deadline) return false;
+    sleep(250);
+  }
+}
+
+/**
+ * Releases the lock of the run. Only the owner releases it.
+ */
+function releaseLock() {
+  try {
+    const holder = JSON.parse(readFileSync(lockPath, "utf8"));
+    if (holder?.pid !== process.pid) return;
+  } catch {
+    return;
+  }
+  rmSync(lockPath, { force: true });
+}
+
+let pendingFiles = [];
+let journalWritten = false;
+
+function writeJournal() {
+  try {
+    writeFileSync(journalPath, JSON.stringify({ root, pendingFiles }, null, 2));
+    journalWritten = true;
+  } catch {
+    // The journal is a backup for a run that cannot clean up after itself. A
+    // failure to write it must not stop the run.
+  }
+}
+
+/**
+ * Restores every file the scorer touched. A file the scorer created and that
+ * did not exist before is removed. A file that existed before comes back
+ * exactly as it was. It is safe to call twice, and it is called on every exit
+ * path.
+ */
+function restoreTree() {
+  for (const entry of [...pendingFiles].reverse()) {
+    try {
+      if (entry.existed) writeFileSync(entry.path, entry.content);
+      else rmSync(entry.path, { force: true });
+    } catch (error) {
+      console.error(
+        `harness: could not restore ${entry.path}: ${error.message}`,
+      );
+    }
+  }
+  pendingFiles = [];
+
+  // The journal belongs to the run that wrote it. A run that never wrote one
+  // must not remove the journal of the run that holds the tree.
+  if (!journalWritten) return;
+  journalWritten = false;
+  rmSync(journalPath, { force: true });
+}
+
+/**
+ * A run that was killed outright cannot clean up after itself. The journal it
+ * left behind holds the content of every file it overwrote, so the next run
+ * puts the tree back before it writes anything of its own.
+ */
+function recoverStaleProbes() {
+  if (!existsSync(journalPath)) return;
+
+  try {
+    const stale = JSON.parse(readFileSync(journalPath, "utf8"));
+    if (stale.root === root && Array.isArray(stale.pendingFiles)) {
+      for (const entry of stale.pendingFiles) {
+        if (entry.existed) writeFileSync(entry.path, entry.content);
+        else rmSync(entry.path, { force: true });
+      }
+      console.log(
+        `harness: restored ${stale.pendingFiles.length} probe file(s) left behind by an earlier run`,
+      );
+    }
+  } catch (error) {
+    console.error(
+      `harness: could not read the probe journal: ${error.message}`,
+    );
+  }
+
+  rmSync(journalPath, { force: true });
+}
+
+function onSignal(signal) {
+  if (runningChild) {
+    runningChild.kill("SIGKILL");
+    runningChild = null;
+  }
+  restoreTree();
+  releaseLock();
+  console.error(`\nharness: ${signal} received, the tree was restored`);
+  process.exit(128 + (os.constants.signals[signal] ?? 0));
+}
+
+/**
+ * The lock guards the probe, which is the only thing the scorer writes into
+ * the tree. It is not held for the whole run, because a run may drive another
+ * run of the scorer, and the two must not wait for each other.
+ *
+ * The stale probes are repaired under the lock, so two runs can never repair
+ * the same probe at the same time.
+ */
+if (!acquireLock()) {
+  console.error(
+    `harness: another run holds the lock of this tree and did not finish within ${lockWaitMs} ms`,
+  );
+  process.exit(1);
+}
+recoverStaleProbes();
+releaseLock();
+
+for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
+  process.on(signal, () => onSignal(signal));
+}
+
+process.on("exit", () => {
+  restoreTree();
+  releaseLock();
+});
+
+process.on("uncaughtException", (error) => {
+  restoreTree();
+  releaseLock();
+  console.error(error);
+  process.exit(1);
+});
+
+process.on("unhandledRejection", (error) => {
+  restoreTree();
+  releaseLock();
+  console.error(error);
+  process.exit(1);
+});
 
 function walk(directory) {
   const found = [];
@@ -319,7 +604,7 @@ function commandLines(runValue) {
 }
 
 const checks = {
-  command(check) {
+  async command(check) {
     const command = String(check.run ?? "");
     if (isNoopCommand(command)) {
       return {
@@ -327,7 +612,7 @@ const checks = {
         reason: `the criterion proves nothing: \`${command.trim()}\` exits 0 without checking anything`,
       };
     }
-    const result = run(command);
+    const result = await run(command);
     if (result.code !== 0) {
       return {
         ok: false,
@@ -345,7 +630,7 @@ const checks = {
     return { ok: true };
   },
 
-  behavioral(check) {
+  async behavioral(check) {
     const command = String(check.run ?? "");
     if (isNoopCommand(command)) {
       return {
@@ -353,7 +638,7 @@ const checks = {
         reason: `the criterion proves nothing: \`${command.trim()}\` exits 0 without driving the app`,
       };
     }
-    const result = run(command);
+    const result = await run(command);
     if (result.code !== 0) {
       return {
         ok: false,
@@ -427,17 +712,23 @@ const checks = {
     return { ok: true };
   },
 
-  node(check) {
+  async node(check) {
+    // The scratch file lives outside the tree, and it is removed when the
+    // check ends, so the check leaves nothing behind anywhere.
     const directory = mkdtempSync(path.join(tmpdir(), "harness-"));
     const file = path.join(directory, "check.mjs");
-    writeFileSync(file, check.script);
-    const result = run(`node ${file}`);
-    if (result.code !== 0) {
-      return {
-        ok: false,
-        reason: `the node check exited ${result.code}`,
-        detail: tail(result.output),
-      };
+    try {
+      writeFileSync(file, check.script);
+      const result = await run(`node ${file}`);
+      if (result.code !== 0) {
+        return {
+          ok: false,
+          reason: `the node check exited ${result.code}`,
+          detail: tail(result.output),
+        };
+      }
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
     }
     return { ok: true };
   },
@@ -523,8 +814,12 @@ const checks = {
    * asserts the linter failed with that rule. A rule that is commented out,
    * switched off, or renamed fails the check, because the linter no longer
    * fails on the code the rule was made for.
+   *
+   * The probe is registered in the journal before it is written, so a run that
+   * is killed between the write and the restore leaves a record that the next
+   * run uses to put the tree back.
    */
-  lintRules(check) {
+  async lintRules(check) {
     const problems = [];
     const probes = check.rules ?? [];
 
@@ -535,7 +830,17 @@ const checks = {
     for (const probe of probes) {
       const target = path.join(root, probe.path);
       const existed = existsSync(target);
-      const backup = existed ? readFileSync(target, "utf8") : null;
+      const content = existed ? readFileSync(target, "utf8") : null;
+
+      if (!acquireLock()) {
+        problems.push(
+          `${probe.name}: another run holds the lock of this tree and did not finish within ${lockWaitMs} ms`,
+        );
+        continue;
+      }
+
+      pendingFiles.push({ path: target, existed, content });
+      writeJournal();
 
       try {
         mkdirFor(target);
@@ -546,7 +851,7 @@ const checks = {
           problems.push(`${probe.name} names no command that runs the linter`);
           continue;
         }
-        const result = run(expand(command, probe.path));
+        const result = await run(expand(command, probe.path));
         if (result.code === 0) {
           problems.push(
             `${probe.name}: the linter exited 0 on a file that breaks ${probe.rule}`,
@@ -559,8 +864,8 @@ const checks = {
           );
         }
       } finally {
-        if (existed) writeFileSync(target, backup);
-        else rmSync(target, { force: true });
+        restoreTree();
+        releaseLock();
       }
     }
 
@@ -720,7 +1025,7 @@ const checks = {
    * - `command` runs the command.
    * - `document` reads the sections of the document.
    */
-  entryPointKinds(check) {
+  async entryPointKinds(check) {
     const settings = { ...(config.agents ?? {}), ...check };
     const file = settings.file ?? "AGENTS.md";
     if (!existsSync(file)) return { ok: false, reason: `${file} is missing` };
@@ -785,7 +1090,7 @@ const checks = {
         continue;
       }
 
-      const reason = validateKind(kind, target, entry);
+      const reason = await validateKind(kind, target, entry);
       if (reason) problems.push(`the rule "${rule}": ${reason}`);
     }
 
@@ -817,7 +1122,7 @@ const checks = {
    * Asserts the built artifact holds what the sources imply. The build
    * command runs first, so a stale artifact cannot pass the check.
    */
-  artifactContains(check) {
+  async artifactContains(check) {
     if (check.build) {
       if (isNoopCommand(check.build)) {
         return {
@@ -825,7 +1130,7 @@ const checks = {
           reason: `the criterion proves nothing: \`${check.build.trim()}\` exits 0 without building anything`,
         };
       }
-      const built = run(check.build);
+      const built = await run(check.build);
       if (built.code !== 0) {
         return {
           ok: false,
@@ -860,7 +1165,7 @@ const checks = {
    * this file, so editing the config alone cannot weaken the gate. A missing
    * member, a renamed member and a duplicated member all fail.
    */
-  exactSet(check) {
+  async exactSet(check) {
     const set = BUILTIN_SETS[check.set];
     if (!set) {
       return {
@@ -900,7 +1205,7 @@ const checks = {
     }
 
     if (check.run) {
-      const result = run(check.run);
+      const result = await run(check.run);
       if (result.code !== 0) {
         return {
           ok: false,
@@ -1102,7 +1407,7 @@ function stepDoesNotRun(entry, required) {
  * Validates one enforcement path by the kind it names. The path existing is
  * never enough.
  */
-function validateKind(kind, target, entry) {
+async function validateKind(kind, target, entry) {
   const full = path.join(root, target);
 
   if (kind === "command") {
@@ -1110,7 +1415,7 @@ function validateKind(kind, target, entry) {
     if (isNoopCommand(command)) {
       return `the command \`${command}\` proves nothing`;
     }
-    const result = run(command);
+    const result = await run(command);
     if (result.code !== 0) {
       return `the command \`${expand(command)}\` exited ${result.code}`;
     }
@@ -1209,7 +1514,7 @@ for (const criterion of selected) {
 
   let result;
   try {
-    result = handler(check);
+    result = await handler(check);
   } catch (error) {
     result = { ok: false, reason: error.message };
   }
