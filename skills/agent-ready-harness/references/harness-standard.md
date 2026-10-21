@@ -103,6 +103,22 @@ architecture documents fails.
 script that refuses the default branch is a `file` kind, because the script cannot exit zero on
 the default branch.
 
+The default entry point states these kinds:
+
+| Path                            | Kind      |
+| ------------------------------- | --------- |
+| `eslint.arch.mjs`               | `config`  |
+| `eslint.config.mjs`             | `config`  |
+| `lefthook.yml`                  | `config`  |
+| `.github/workflows/ci.yml`      | `config`  |
+| `package.json`                  | `config`  |
+| `scripts/harness-score.mjs`     | `file`    |
+| `scripts/prove-guardrails.mjs`  | `file`    |
+| `scripts/prove-harness.mjs`     | `file`    |
+| `scripts/guard-branch.sh`       | `file`    |
+| `docs/ratchet.md`               | `document`|
+| `docs/mistake-log.md`           | `document`|
+
 ## 6. The local gate exists
 
 **Proves:** a broken change fails before it reaches the branch.
