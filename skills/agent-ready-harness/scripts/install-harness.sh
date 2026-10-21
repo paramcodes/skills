@@ -3,7 +3,9 @@
 # Installs the agent harness in a repository.
 #
 # Detects the package manager, copies the files that fit the stack, patches
-# package.json with the harness scripts, and prints the adaptation checklist.
+# package.json with the harness scripts, adds the yaml dependency the scorer
+# parses workflows with, adapts the criterion set to a second language
+# toolchain, and prints the adaptation checklist.
 # It never overwrites a file that already exists unless --force is given.
 
 set -euo pipefail
@@ -16,16 +18,18 @@ pm_override=""
 project_override=""
 force=0
 dry_run=0
+install_deps=1
 
 usage() {
   cat <<'USAGE'
-usage: install-harness.sh <repo-path> [--pm pnpm|npm|yarn|bun] [--project <name>] [--force] [--dry-run]
+usage: install-harness.sh <repo-path> [--pm pnpm|npm|yarn|bun] [--project <name>] [--force] [--dry-run] [--no-install]
 
   <repo-path>   the repository that receives the harness
   --pm          override the detected package manager
   --project     override the project name used in AGENTS.md
   --force       overwrite files that already exist
   --dry-run     print what would happen and change nothing
+  --no-install  do not run the package manager to fetch the added dependency
 USAGE
 }
 
@@ -35,6 +39,7 @@ while [ $# -gt 0 ]; do
     --project) project_override="${2:-}"; shift 2 ;;
     --force) force=1; shift ;;
     --dry-run) dry_run=1; shift ;;
+    --no-install) install_deps=0; shift ;;
     -h|--help) usage; exit 0 ;;
     *) repo="$1"; shift ;;
   esac
@@ -105,6 +110,7 @@ case "$pm" in
           node-version: 22
           cache: pnpm"
     install_command="pnpm install --frozen-lockfile"
+    local_install_command="pnpm install"
     ;;
   npm)
     setup_steps="      - uses: actions/setup-node@v4
@@ -112,6 +118,7 @@ case "$pm" in
           node-version: 22
           cache: npm"
     install_command="npm ci"
+    local_install_command="npm install"
     ;;
   yarn)
     setup_steps="      - uses: actions/setup-node@v4
@@ -120,6 +127,7 @@ case "$pm" in
           cache: yarn
       - run: corepack enable"
     install_command="yarn install --immutable"
+    local_install_command="yarn install"
     ;;
   bun)
     setup_steps="      - uses: oven-sh/setup-bun@v2
@@ -127,24 +135,44 @@ case "$pm" in
         with:
           node-version: 22"
     install_command="bun install --frozen-lockfile"
+    local_install_command="bun install"
     ;;
 esac
+
+# The end-to-end command drives the app, so the behavioural criterion has
+# something to run. The canonical name is test:e2e. A repository that calls the
+# same suite something else gets an alias, so the criterion and the workflow
+# keep one name.
+e2e_script=""
+for candidate in test:e2e e2e test:integration test:browser; do
+  if [ -n "$(read_json "scripts.${candidate}")" ]; then
+    e2e_script="$candidate"
+    break
+  fi
+done
+
+if [ -n "$e2e_script" ]; then
+  e2e_command="$pm $e2e_script"
+else
+  e2e_command="$pm test:e2e"
+fi
 
 render() {
   node -e '
     const fs = require("fs");
-    const [source, target, project, pm, pmExec, setup, install] = process.argv.slice(1);
+    const [source, target, project, pm, pmExec, setup, install, e2e] = process.argv.slice(1);
     let content = fs.readFileSync(source, "utf8");
     content = content
-      .replace(/^[ \t]*# @@SETUP@@$/m, setup.trimEnd())
+      .replace(/^[ \t]*# @@SETUP@@$/gm, () => setup.trimEnd())
       .split("@@PROJECT@@").join(project)
       .split("@@INSTALL@@").join(install)
+      .split("@@E2E@@").join(e2e)
       .split("@@PM_EXEC@@").join(pmExec)
       .split("@@PM@@").join(pm)
       .split("{{PM_EXEC}}").join(pmExec)
       .split("{{PM}}").join(pm);
     fs.writeFileSync(target, content);
-  ' "$1" "$2" "$project" "$pm" "$pm_exec" "$setup_steps" "$install_command"
+  ' "$1" "$2" "$project" "$pm" "$pm_exec" "$setup_steps" "$install_command" "$e2e_command"
 }
 
 installed_files=()
@@ -187,6 +215,11 @@ install_file "harness.config.json" "harness.config.json" always
 install_file "scripts/harness-score.mjs" "scripts/harness-score.mjs" always
 install_file "scripts/prove-guardrails.mjs" "scripts/prove-guardrails.mjs" always
 install_file "scripts/guard-branch.sh" "scripts/guard-branch.sh" always
+if [ -f "$templates_dir/scripts/prove-harness.mjs" ]; then
+  install_file "scripts/prove-harness.mjs" "scripts/prove-harness.mjs" always
+else
+  printf 'warn    the self proof template is missing, this copy of the skill is incomplete\n'
+fi
 install_file "docs/ratchet.md" "docs/ratchet.md" if-missing
 install_file "docs/mistake-log.md" "docs/mistake-log.md" if-missing
 install_file "AGENTS.md" "AGENTS.md" if-missing
@@ -215,6 +248,9 @@ fi
 
 if [ "$dry_run" -eq 0 ]; then
   chmod +x "$repo/scripts/harness-score.mjs" "$repo/scripts/prove-guardrails.mjs" "$repo/scripts/guard-branch.sh"
+  if [ -f "$repo/scripts/prove-harness.mjs" ]; then
+    chmod +x "$repo/scripts/prove-harness.mjs"
+  fi
 
   format_targets=()
   for target in "${installed_files[@]:-}"; do
@@ -232,27 +268,162 @@ if [ "$dry_run" -eq 0 ]; then
     const file = process.argv[1];
     const pm = process.argv[2];
     const pmExec = process.argv[3];
+    const e2eScript = process.argv[4];
     const pkg = JSON.parse(fs.readFileSync(file, "utf8"));
     pkg.scripts = pkg.scripts ?? {};
     const wanted = {
       harness: "node scripts/harness-score.mjs",
       prove: "node scripts/prove-guardrails.mjs",
+      "prove-harness": "node scripts/prove-harness.mjs",
       arch: `${pmExec} eslint --config eslint.arch.mjs . --max-warnings=0`,
     };
     for (const [name, command] of Object.entries(wanted)) {
       if (!pkg.scripts[name]) pkg.scripts[name] = command;
     }
-    const devDependencies = pkg.devDependencies ?? {};
-    if (!pkg.scripts.prepare && devDependencies.lefthook) {
+    if (e2eScript && !pkg.scripts["test:e2e"]) {
+      pkg.scripts["test:e2e"] = pkg.scripts[e2eScript];
+    }
+    if (!pkg.scripts.prepare && (pkg.devDependencies?.lefthook ?? pkg.dependencies?.lefthook)) {
       pkg.scripts.prepare = `${pmExec} lefthook install`;
     }
+    const devDependencies = pkg.devDependencies ?? {};
+    if (!devDependencies.yaml && !pkg.dependencies?.yaml) {
+      devDependencies.yaml = "^2.9.1";
+      pkg.devDependencies = devDependencies;
+    }
     fs.writeFileSync(file, `${JSON.stringify(pkg, null, 2)}\n`);
-  ' "$repo/package.json" "$pm" "$pm_exec"
-  printf 'patch   package.json scripts: harness, prove, arch\n'
+  ' "$repo/package.json" "$pm" "$pm_exec" "$e2e_script"
+  printf 'patch   package.json scripts: harness, prove, prove-harness, arch, and the yaml dependency\n'
+fi
+
+# The second toolchain. A repository with two languages holds both of them to a
+# gate, and the criterion set says so.
+detect_toolchain() {
+  if [ -f "$repo/pyproject.toml" ] || [ -f "$repo/setup.py" ] || [ -f "$repo/requirements.txt" ]; then
+    echo python
+  elif [ -f "$repo/Cargo.toml" ]; then
+    echo rust
+  elif [ -f "$repo/go.mod" ]; then
+    echo go
+  elif [ -f "$repo/Gemfile" ]; then
+    echo ruby
+  else
+    echo ""
+  fi
+}
+
+has_command() {
+  command -v "$1" >/dev/null 2>&1
+}
+
+toolchain_gate() {
+  case "$1" in
+    python)
+      if has_command ruff; then echo "ruff check ."; return; fi
+      if has_command python3; then echo "python3 -m compileall -q ."; return; fi
+      if has_command python; then echo "python -m compileall -q ."; return; fi
+      ;;
+    rust)
+      if has_command cargo; then echo "cargo clippy --all-targets -- -D warnings"; return; fi
+      ;;
+    go)
+      if has_command go; then echo "go vet ./..."; return; fi
+      ;;
+    ruby)
+      if has_command bundle; then echo "bundle exec rubocop"; return; fi
+      if has_command ruby; then echo "ruby -c"; return; fi
+      ;;
+  esac
+  echo ""
+}
+
+toolchain="$(detect_toolchain)"
+toolchain_gate_command=""
+toolchain_gate_display=""
+toolchain_why=""
+toolchain_note=""
+
+if [ -n "$toolchain" ]; then
+  toolchain_gate_command="$(toolchain_gate "$toolchain")"
+  if [ -n "$toolchain_gate_command" ]; then
+    toolchain_gate_display="$toolchain_gate_command"
+    toolchain_why="the $toolchain toolchain is gated too"
+    toolchain_note="Replaced the second-toolchain criterion with the $toolchain gate ($toolchain_gate_command) because this repository has a second language toolchain."
+  else
+    toolchain_note="This repository has a second language toolchain ($toolchain) and no gate command for it, so the second-toolchain criterion needs a check by hand."
+  fi
+else
+  toolchain_gate_command=""
+  for candidate in lint typecheck test build verify; do
+    if [ -n "$(read_json "scripts.${candidate}")" ]; then
+      toolchain_gate_command="\${PM} run $candidate"
+      toolchain_gate_display="$pm run $candidate"
+      break
+    fi
+  done
+  if [ -n "$toolchain_gate_command" ]; then
+    toolchain_why="the one toolchain of this repository is gated"
+    toolchain_note="Replaced the second-toolchain criterion with the repository gate ($toolchain_gate_display) because this repository has one language toolchain."
+  fi
+fi
+
+if [ "$dry_run" -eq 0 ]; then
+  if [ -n "$toolchain_note" ]; then
+    if [ -n "$toolchain_gate_command" ]; then
+      adapt_result="$(node -e '
+        const fs = require("fs");
+        const file = process.argv[1];
+        const idPattern = new RegExp(process.argv[2], "i");
+        const check = JSON.parse(process.argv[3]);
+        const why = process.argv[4];
+        const note = process.argv[5];
+        const config = JSON.parse(fs.readFileSync(file, "utf8"));
+        const criteria = Array.isArray(config.criteria) ? config.criteria : [];
+        const index = criteria.findIndex((criterion) => idPattern.test(criterion.id ?? ""));
+        if (index === -1) {
+          config.notes = [...(config.notes ?? []), note];
+          fs.writeFileSync(file, `${JSON.stringify(config, null, 2)}\n`);
+          process.stdout.write("no-match");
+          process.exit(0);
+        }
+        criteria[index] = { ...criteria[index], why, check };
+        config.criteria = criteria;
+        config.notes = [...(config.notes ?? []), note];
+        fs.writeFileSync(file, `${JSON.stringify(config, null, 2)}\n`);
+        process.stdout.write("adapted");
+      ' "$repo/harness.config.json" "toolchain|polyglot" "{\"type\":\"command\",\"run\":\"$toolchain_gate_command\"}" "$toolchain_why" "$toolchain_note")"
+      case "$adapt_result" in
+        adapted) printf 'adapt   the second-toolchain criterion: %s\n' "$toolchain_gate_display" ;;
+        *) printf 'warn    no criterion matches the second-toolchain slot, adapt it by hand\n' ;;
+      esac
+    else
+      node -e '
+        const fs = require("fs");
+        const file = process.argv[1];
+        const note = process.argv[2];
+        const config = JSON.parse(fs.readFileSync(file, "utf8"));
+        config.notes = [...(config.notes ?? []), note];
+        fs.writeFileSync(file, `${JSON.stringify(config, null, 2)}\n`);
+      ' "$repo/harness.config.json" "$toolchain_note"
+      printf 'adapt   the notes array records the second toolchain\n'
+    fi
+  fi
+fi
+
+if [ "$dry_run" -eq 0 ] && [ "$install_deps" -eq 1 ]; then
+  if has_command "$pm"; then
+    if (cd "$repo" && timeout 600 $local_install_command >/dev/null 2>&1); then
+      printf 'install the yaml dependency with %s\n' "$local_install_command"
+    else
+      printf 'warn    the dependency install failed, run `%s install` to fetch the yaml package\n' "$pm"
+    fi
+  else
+    printf 'warn    %s is not on the path, run `%s install` to fetch the yaml package\n' "$pm" "$pm"
+  fi
 fi
 
 missing_scripts=""
-for script in verify typecheck lint; do
+for script in verify typecheck lint test:e2e; do
   if [ -z "$(read_json "scripts.$script")" ]; then
     missing_scripts="$missing_scripts $script"
   fi
@@ -265,17 +436,20 @@ harness installed in $repo
 next steps:
   1. Adapt harness.config.json. Set layers.data.alias, layers.data.dir, the file globs in
      layers.restricted, dataAccess.dir and dataAccess.actorPattern. Replace every criterion that
-     does not apply to this stack with one that does, and record the replacement in the notes array.
+     does not apply to this stack with one that does, keep the criterion id, and record the
+     replacement in the notes array.
   2. Merge the boundary and the local rules into eslint.config.mjs:
        import arch from "./eslint.arch.mjs";
        import { rules as localRules } from "./eslint-rules/index.mjs";
      add arch to the config array, add the plugin { local: { rules: localRules } }, and turn the
      escape hatches into errors with linterOptions.noInlineConfig, local/no-raw-json-parse,
      local/no-inline-config and @typescript-eslint/ban-ts-comment.
-  3. Write the rules in AGENTS.md. Every bullet ends with "Enforced by: <path>", and the path must
-     exist on disk. The harness fails when one does not.
+  3. Write the rules in AGENTS.md. Every bullet ends with "Enforced by: <kind>:<path>", where the
+     kind is config, file, command or document, and the path must exist on disk. The harness fails
+     when one does not, and when the path does not enforce anything.
   4. Add the missing package scripts.$missing_scripts
   5. Add lefthook, prettier and eslint as dev dependencies if this repository does not have them.
-  6. Run $pm harness and $pm prove. Both must pass before the first commit.
+  6. Run $pm harness, $pm prove and $pm prove-harness. All three must pass before the first
+     commit.
   7. Keep the CI commands identical to the local ones, and let CI score the harness.
 CHECKLIST

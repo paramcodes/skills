@@ -1,5 +1,6 @@
 # Local fast gate. Runs on every commit so a broken change is caught before it
-# reaches the branch.
+# reaches the branch. Every run value starts with the command it runs, so a
+# step can never pass by echoing the command instead of running it.
 
 pre-commit:
   parallel: true
