@@ -1,12 +1,17 @@
 # Mistake log
 
-This log records mistakes this repository has made and the guardrail that now catches each one. A
+This log records the mistakes this repository has made and the guardrail that now catches each one. A
 row is added only when a guardrail exists and a proof case covers it. `docs/ratchet.md` describes
 the three steps that produce a row.
 
+A fresh install starts with no rows. The log holds the history of this repository and not the
+history of the template it came from, so a row appears only when this repository has made a
+mistake and earned a guardrail for it.
+
 | Date | Mistake | How it slipped through | Fix | Guardrail now | Proof case |
 | ---- | ------- | ---------------------- | --- | ------------- | ---------- |
-| 2026-10-21 | The harness scored a count of criteria, so a deleted criterion kept the score green | The scorer compared a length and never held the expected criterion ids | The scorer holds the expected criterion ids in its own code and compares them as an exact set | scripts/harness-score.mjs | the harness fails when a criterion is deleted |
+
+<!-- One row, as an example. It is a comment, so the log parser does not read it as a row: | 2026-01-31 | The gate ran the wrong command | The hook echoed the command instead of running it | The hook runs the command | scripts/guard-branch.sh | the branch guard bites | -->
 
 ## Reading a row
 
