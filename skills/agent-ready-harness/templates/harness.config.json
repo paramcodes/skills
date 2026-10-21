@@ -4,7 +4,7 @@
     "exec": "{{PM_EXEC}}"
   },
   "minimumCriteria": 13,
-  "minimumProofs": 20,
+  "minimumProofs": 26,
   "maxHarnessSeconds": 900,
   "agents": {
     "file": "AGENTS.md",
@@ -421,7 +421,7 @@
       "write": [
         {
           "path": "docs/mistake-log.md",
-          "content": "# Mistake log\n\n| Date | Mistake | How it slipped through | Fix | Guardrail now | Proof case |\n| ---- | ------- | ---------------------- | --- | ------------- | ---------- |\n| 2026-10-21 | A mistake | It slipped | It was fixed | scripts/does-not-exist.mjs | a case |\n"
+          "content": "# Mistake log\n\n| Date | Mistake | How it slipped through | Fix | Guardrail now | Proof case |\n| ---- | ------- | ---------------------- | --- | ------------- | ---------- |\n| 2026-10-21 | A mistake | It slipped | It was fixed | scripts/does-not-exist.mjs | the source tree parses raw JSON |\n"
         }
       ],
       "expect": {
@@ -534,6 +534,96 @@
         "exit": "nonzero",
         "contains": "allowed to fail"
       }
+    },
+    {
+      "name": "the ci criterion fails when the job is guarded off",
+      "criterion": "ci",
+      "write": [
+        {
+          "path": ".github/workflows/ci.yml",
+          "content": "name: CI\n\non:\n  pull_request:\n\njobs:\n  verify:\n    if: false\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n\n      - name: Install dependencies\n        run: \"npm ci\"\n\n      - name: Verify\n        run: \"npm run verify\"\n\n      - name: Score the agent harness\n        run: \"npm run harness\"\n"
+        }
+      ],
+      "expect": {
+        "run": "${PM} run harness -- --only ci",
+        "exit": "nonzero",
+        "contains": "job the step belongs to is guarded"
+      }
+    },
+    {
+      "name": "the command criterion fails when the command swallows its failure",
+      "criterion": "verify",
+      "write": [
+        {
+          "path": "scripts/__harness_probe.mjs",
+          "content": "import { execSync } from \"node:child_process\";\nimport { readFileSync, writeFileSync } from \"node:fs\";\nimport os from \"node:os\";\nimport path from \"node:path\";\n\nconst root = process.cwd();\nconst config = JSON.parse(\n  readFileSync(path.join(root, \"harness.config.json\"), \"utf8\"),\n);\nconst criterion = config.criteria.find((entry) => entry.id === \"verify\");\ncriterion.check.run = \"npm run verify || echo ok\";\nconst file = path.join(os.tmpdir(), \"harness-probe-swallow.json\");\nwriteFileSync(file, JSON.stringify(config, null, 2));\n\nlet output = \"\";\nlet code = 0;\ntry {\n  output = execSync(\"node scripts/harness-score.mjs --only verify\", {\n    encoding: \"utf8\",\n    cwd: root,\n    env: { ...process.env, HARNESS_CONFIG: file },\n    stdio: [\"ignore\", \"pipe\", \"pipe\"],\n  });\n} catch (error) {\n  code = error.status === undefined ? 1 : error.status;\n  output = (error.stdout ?? \"\") + (error.stderr ?? \"\");\n}\nprocess.stdout.write(output);\nprocess.exit(code);\n"
+        }
+      ],
+      "expect": {
+        "run": "node scripts/__harness_probe.mjs",
+        "exit": "nonzero",
+        "contains": "swallows its own failure"
+      }
+    },
+    {
+      "name": "the escape hatches criterion fails when its rules are re-pointed",
+      "criterion": "escape-hatches",
+      "write": [
+        {
+          "path": "scripts/__harness_probe.mjs",
+          "content": "import { execSync } from \"node:child_process\";\nimport { readFileSync, writeFileSync } from \"node:fs\";\nimport os from \"node:os\";\nimport path from \"node:path\";\n\nconst root = process.cwd();\nconst config = JSON.parse(\n  readFileSync(path.join(root, \"harness.config.json\"), \"utf8\"),\n);\nconst criterion = config.criteria.find((entry) => entry.id === \"escape-hatches\");\nfor (const rule of criterion.check.rules) {\n  rule.rule = \"@typescript-eslint/ban-ts-comment\";\n}\nconst file = path.join(os.tmpdir(), \"harness-probe-repoint.json\");\nwriteFileSync(file, JSON.stringify(config, null, 2));\n\nlet output = \"\";\nlet code = 0;\ntry {\n  output = execSync(\"node scripts/harness-score.mjs --only escape-hatches\", {\n    encoding: \"utf8\",\n    cwd: root,\n    env: { ...process.env, HARNESS_CONFIG: file },\n    stdio: [\"ignore\", \"pipe\", \"pipe\"],\n  });\n} catch (error) {\n  code = error.status === undefined ? 1 : error.status;\n  output = (error.stdout ?? \"\") + (error.stderr ?? \"\");\n}\nprocess.stdout.write(output);\nprocess.exit(code);\n"
+        }
+      ],
+      "expect": {
+        "run": "node scripts/__harness_probe.mjs",
+        "exit": "nonzero",
+        "contains": "does not prove"
+      }
+    },
+    {
+      "name": "the prover writes its journal before it writes the probe",
+      "criterion": "boundaries",
+      "write": [
+        {
+          "path": "scripts/__harness_probe.mjs",
+          "content": "import { spawn } from \"node:child_process\";\nimport { existsSync, statSync } from \"node:fs\";\nimport os from \"node:os\";\nimport path from \"node:path\";\n\nconst root = process.cwd();\nconst probe = path.join(root, \"src/domain/__harness_probe.ts\");\nconst unique = \"harness-prove-probe-\" + process.pid;\nconst journal = path.join(os.tmpdir(), unique + \".json\");\nconst env = {\n  ...process.env,\n  PROVE_LOCK_PATH: path.join(os.tmpdir(), unique + \".lock\"),\n  PROVE_JOURNAL_PATH: journal,\n};\n\nconst child = spawn(\"node\", [\"scripts/prove-guardrails.mjs\"], {\n  cwd: root,\n  env,\n  stdio: [\"ignore\", \"pipe\", \"pipe\"],\n});\n\nconst deadline = Date.now() + 60000;\nlet appeared = false;\nwhile (!appeared && Date.now() < deadline) {\n  if (existsSync(probe)) appeared = true;\n  else await new Promise((resolve) => setTimeout(resolve, 20));\n}\n\nif (!appeared) {\n  console.error(\"the probe file never appeared, the test proves nothing\");\n  process.exit(1);\n}\n\nchild.kill(\"SIGKILL\");\nawait new Promise((resolve) => child.on(\"close\", resolve));\n\nif (!existsSync(journal)) {\n  console.error(\"the killed run left no journal, so no later run can repair the tree\");\n  process.exit(1);\n}\n\nconst { readFileSync } = await import(\"node:fs\");\nconst record = JSON.parse(readFileSync(journal, \"utf8\"));\nconst names = (record.pendingFiles ?? []).map((entry) => entry.path);\nif (!names.includes(probe)) {\n  console.error(\"the journal does not name the probe it wrote\");\n  process.exit(1);\n}\n\nif (statSync(journal).mtimeMs > statSync(probe).mtimeMs) {\n  console.error(\"the journal was written after the probe, so a kill between the two leaves a probe no run repairs\");\n  process.exit(1);\n}\n\nconsole.log(\"the journal was written before the probe\");\n\n// The killed run left its probe behind. The script takes it away, because the\n// tree must be as it was before the script ran.\nconst { rmSync } = await import(\"node:fs\");\nrmSync(probe, { force: true });\nrmSync(journal, { force: true });\n"
+        }
+      ],
+      "expect": {
+        "run": "node scripts/__harness_probe.mjs",
+        "exit": "zero",
+        "contains": "the journal was written before the probe"
+      }
+    },
+    {
+      "name": "the prover refuses a second run and names the holder",
+      "criterion": "boundaries",
+      "write": [
+        {
+          "path": "scripts/__harness_probe.mjs",
+          "content": "import { spawn } from \"node:child_process\";\n\nconst root = process.cwd();\n\nconst holder = spawn(\"node\", [\"scripts/prove-guardrails.mjs\"], {\n  cwd: root,\n  stdio: [\"ignore\", \"pipe\", \"pipe\"],\n});\n\nawait new Promise((resolve) => setTimeout(resolve, 2000));\n\nconst second = spawn(\"node\", [\"scripts/prove-guardrails.mjs\"], {\n  cwd: root,\n  stdio: [\"ignore\", \"pipe\", \"pipe\"],\n  env: { ...process.env, PROVE_LOCK_WAIT_MS: \"3000\" },\n});\nlet output = \"\";\nsecond.stdout.on(\"data\", (chunk) => {\n  output += chunk;\n});\nsecond.stderr.on(\"data\", (chunk) => {\n  output += chunk;\n});\nconst code = await new Promise((resolve) => second.on(\"close\", resolve));\n\nholder.kill(\"SIGTERM\");\nawait new Promise((resolve) => holder.on(\"close\", resolve));\n\nif (code === 0) {\n  console.error(\"the second run was allowed to run beside the first\");\n  process.exit(1);\n}\nif (!output.includes(\"pid \")) {\n  console.error(\"the refusal does not name the holder:\\n\" + output);\n  process.exit(1);\n}\n\nconsole.log(\"the refusal names the holder\");\n"
+        }
+      ],
+      "expect": {
+        "run": "node scripts/__harness_probe.mjs",
+        "exit": "zero",
+        "contains": "the refusal names the holder"
+      }
+    },
+    {
+      "name": "the mistake log criterion fails when a row names no proof case",
+      "criterion": "mistake-log",
+      "write": [
+        {
+          "path": "docs/mistake-log.md",
+          "content": "# Mistake log\n\n| Date | Mistake | How it slipped through | Fix | Guardrail now | Proof case |\n| ---- | ------- | ---------------------- | --- | ------------- | ---------- |\n| 2026-10-21 | A mistake | It slipped | It was fixed | scripts/harness-score.mjs |  |\n"
+        }
+      ],
+      "expect": {
+        "run": "${PM} run harness -- --only mistake-log",
+        "exit": "nonzero",
+        "contains": "names no proof case"
+      }
     }
   ],
   "notes": [
@@ -555,6 +645,8 @@
     "Every rule of AGENTS.md names its enforcement as `Enforced by: <kind>:<path>`, where the kind is config, file, command or document. There is no space after the colon, because the kind and the path are one token.",
     "The scorer writes a probe file to run the linter, and it leaves the tree exactly as it found it, on every exit path. A run that was killed outright leaves a journal outside the tree, and the next run restores the tree from that journal before it writes anything of its own.",
     "The lint ignore lists cover dist, because the default config builds into dist. A lint that scans the built output lints the compiler's output and fails on it.",
-    "The runtime ceiling is 900 seconds because a score of this set costs about 250 seconds on a loaded machine and about 150 seconds on an idle one, and a ceiling below the cost of the default ships red. Raise it when the repository is slower, never lower it to make a slow score look green."
+    "The runtime ceiling is 900 seconds because a score of this set costs about 250 seconds on a loaded machine and about 150 seconds on an idle one, and a ceiling below the cost of the default ships red. Raise it when the repository is slower, never lower it to make a slow score look green.",
+    "The rules the escape hatches criterion proves are held by the scorer, not by this config, and the scorer holds a digest of every proof case. A proof case may not be edited to make it pass, and the criterion may not be re-pointed at a rule that still fires while a guardrail is off.",
+    "A row of the mistake log names the proof case that covers it, and the name must be one the proof set holds. A row that names no proof case fails the criterion."
   ]
 }

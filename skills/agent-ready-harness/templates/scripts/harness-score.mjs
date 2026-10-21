@@ -108,6 +108,68 @@ const EXPECTED_CRITERION_IDS = [
 ];
 
 /**
+ * The rules the escape hatches criterion proves.
+ *
+ * The list lives in this file, not in the config, for the same reason the
+ * criterion ids live here: a config a reader can edit must not hold the teeth
+ * of the criterion. Re-pointing the probes at a rule that still fires leaves
+ * the criterion green with a guardrail off, and the scorer refuses it.
+ */
+const EXPECTED_ESCAPE_RULES = [
+  "@typescript-eslint/ban-ts-comment",
+  "local/no-inline-config",
+  "local/no-raw-json-parse",
+  "local/no-skipped-tests",
+];
+
+/**
+ * The digest of each proof case.
+ *
+ * The names of the proof cases are pinned in this file and in the prover. The
+ * content of a proof case is pinned here as well: a proof whose content
+ * changed without its digest changing fails the run, so a proof case cannot be
+ * made to pass by editing it.
+ */
+const EXPECTED_PROOF_DIGESTS = {
+  "a domain file imports the data layer": "83d0ccd8ca39fc60",
+  "a component imports the data layer": "60efc435673b74ab",
+  "a page imports the data layer": "80c644ec157ec133",
+  "a domain file imports a component": "cebd2d5dd334f3b8",
+  "a component imports the domain layer": "5b0dfec3244f76f5",
+  "the source tree carries an inline lint config": "677adede2a77b639",
+  "the source tree carries a ts-expect-error": "d2da2a53a237a359",
+  "the source tree carries a skipped test": "56eff5cc7729b1bf",
+  "the source tree parses raw JSON": "116bb33fbd86a2ba",
+  "the harness fails when it takes longer than the ceiling": "454bbcc6efe0d943",
+  "the arch lint ignores the built output": "9b1ffc1d254e852c",
+  "the mistake log criterion fails when a row names no guardrail":
+    "ea96c9106e4ce5bb",
+  "the mistake log criterion fails when a row names a guardrail that does not exist":
+    "f8aa0bdbe03624fb",
+  "the entry point criterion fails when a rule names no kind":
+    "8799970096945f76",
+  "the scorer restores its probe when it is killed with a signal":
+    "c7a996cc2bb8fd77",
+  "the scorer repairs a tree that a killed run left dirty": "6c4ce548b2d61c5d",
+  "the command criterion fails when the command only prints":
+    "d3892297d50d2478",
+  "the harness fails when a package script only prints": "17adceceeb2d5792",
+  "the entry point criterion fails when a rule names an unregistered path":
+    "d2b9dd5b1a41cf6d",
+  "the ci criterion fails when a step is allowed to fail": "07641ce6ba7cb73e",
+  "the ci criterion fails when the job is guarded off": "e4ab6286bcc5bb50",
+  "the command criterion fails when the command swallows its failure":
+    "e90da484af983a61",
+  "the escape hatches criterion fails when its rules are re-pointed":
+    "4c8941d35b348065",
+  "the prover writes its journal before it writes the probe":
+    "3f239754b8ed6673",
+  "the prover refuses a second run and names the holder": "268565821f8ef9f6",
+  "the mistake log criterion fails when a row names no proof case":
+    "9912b1d0d5a723d3",
+};
+
+/**
  * The proof cases the harness holds.
  *
  * The list lives in this file and in `scripts/prove-guardrails.mjs`, so that
@@ -135,6 +197,12 @@ const EXPECTED_PROOF_NAMES = [
   "the harness fails when a package script only prints",
   "the entry point criterion fails when a rule names an unregistered path",
   "the ci criterion fails when a step is allowed to fail",
+  "the ci criterion fails when the job is guarded off",
+  "the command criterion fails when the command swallows its failure",
+  "the escape hatches criterion fails when its rules are re-pointed",
+  "the prover writes its journal before it writes the probe",
+  "the prover refuses a second run and names the holder",
+  "the mistake log criterion fails when a row names no proof case",
 ];
 
 function expand(text, probe) {
@@ -170,7 +238,7 @@ function isNoopCommand(command) {
   if (NOOP_COMMANDS.has(trimmed)) return true;
   if (NOOP_COMMANDS.has(trimmed.toLowerCase())) return true;
   if (/^echo\b/.test(trimmed)) return true;
-  if (/(\|\|\s*true|;\s*true)\s*$/.test(trimmed)) return true;
+  if (swallowsFailure(trimmed)) return true;
   return false;
 }
 
@@ -249,6 +317,39 @@ function run(command) {
       });
     });
   });
+}
+
+/**
+ * The digest of a proof case: what it writes, what it expects and the criterion
+ * it breaks. The name is not part of it, because the name is pinned elsewhere.
+ */
+function proofDigest(proof) {
+  const canonical = canonicalJson({
+    criterion: proof.criterion ?? "",
+    expect: proof.expect ?? {},
+    write: (proof.write ?? []).map((write) => ({
+      path: write.path ?? "",
+      content: write.content ?? "",
+    })),
+  });
+  return createHash("sha256").update(canonical).digest("hex").slice(0, 16);
+}
+
+/**
+ * JSON with the keys of every object in order, so that the same content
+ * always digests to the same value.
+ */
+function canonicalJson(value) {
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => canonicalJson(item)).join(",")}]`;
+  }
+  if (value && typeof value === "object") {
+    const keys = Object.keys(value).sort();
+    return `{${keys
+      .map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value);
 }
 
 function tail(text, lines = 6) {
@@ -375,6 +476,26 @@ function acquireLock() {
 }
 
 /**
+ * The run that holds the lock, so that a refusal names the holder and not
+ * only the wait.
+ */
+function describeLockHolder() {
+  try {
+    const holder = JSON.parse(readFileSync(lockPath, "utf8"));
+    if (typeof holder?.pid === "number") {
+      const since =
+        typeof holder.startedAt === "number"
+          ? `, running since ${new Date(holder.startedAt).toISOString()}`
+          : "";
+      return `pid ${holder.pid}${since}`;
+    }
+  } catch {
+    // The lock cannot be read, so the holder cannot be named.
+  }
+  return "the holder cannot be read";
+}
+
+/**
  * Releases the lock of the run. Only the owner releases it.
  */
 function releaseLock() {
@@ -475,7 +596,7 @@ function onSignal(signal) {
  */
 if (!acquireLock()) {
   console.error(
-    `harness: another run holds the lock of this tree and did not finish within ${lockWaitMs} ms`,
+    `harness: another run holds the lock of this tree (${describeLockHolder()}) and did not finish within ${lockWaitMs} ms`,
   );
   process.exit(1);
 }
@@ -594,6 +715,17 @@ function describeTrail(trail) {
 }
 
 /**
+ * The job a step belongs to. The trail of a step under a job is
+ * `jobs.<name>.steps.<n>`, so the job is the second element of the trail.
+ */
+function jobOf(entry, jobs) {
+  const trail = entry.trail ?? [];
+  if (trail[0] !== "jobs" || typeof trail[1] !== "string") return null;
+  const job = jobs[trail[1]];
+  return job && typeof job === "object" ? job : null;
+}
+
+/**
  * Removes the package manager prefix from a command, so that `pnpm exec
  * eslint --max-warnings=0` and `eslint --max-warnings=0` name the same
  * command.
@@ -631,8 +763,34 @@ function runsCommand(effective, required) {
   return wanted.every((token, index) => actual[index] === token);
 }
 
-function swallowsFailure(line) {
-  return /(\|\|\s*true\b|;\s*true\b)/.test(line);
+/**
+ * True when the fallback after a `||` or a `;` propagates the failure instead
+ * of swallowing it. `exit 1` and `false` propagate. Everything else swallows:
+ * it runs, it succeeds, and the failure is gone.
+ */
+function propagatesFailure(fallback) {
+  const trimmed = String(fallback).trim();
+  if (/^exit\s+[1-9]\d*$/.test(trimmed)) return true;
+  if (/^exit\s+\$\?$/.test(trimmed)) return true;
+  if (trimmed === "false") return true;
+  return false;
+}
+
+/**
+ * True when the command swallows its own failure.
+ *
+ * A chain with `&&` is a chain: it fails when the first command fails, so it
+ * swallows nothing. A fallback that runs after a `||` or a `;` swallows the
+ * failure unless the fallback propagates it. `npm run verify || echo ok`
+ * swallows the failure of the verify, whatever the fallback is called.
+ */
+function swallowsFailure(command) {
+  const parts = String(command)
+    .split(/\|\||;/)
+    .map((part) => part.trim())
+    .filter((part) => part !== "");
+  if (parts.length < 2) return false;
+  return parts.slice(1).some((part) => !propagatesFailure(part));
 }
 
 /**
@@ -654,9 +812,12 @@ const checks = {
   async command(check) {
     const command = String(check.run ?? "");
     if (isNoopCommand(command)) {
+      const why = swallowsFailure(command)
+        ? "swallows its own failure"
+        : "exits 0 without checking anything";
       return {
         ok: false,
-        reason: `the criterion proves nothing: \`${command.trim()}\` exits 0 without checking anything`,
+        reason: `the criterion proves nothing: \`${command.trim()}\` ${why}`,
       };
     }
     const script = packageScriptBody(expand(command));
@@ -687,9 +848,12 @@ const checks = {
   async behavioral(check) {
     const command = String(check.run ?? "");
     if (isNoopCommand(command)) {
+      const why = swallowsFailure(command)
+        ? "swallows its own failure"
+        : "exits 0 without driving the app";
       return {
         ok: false,
-        reason: `the criterion proves nothing: \`${command.trim()}\` exits 0 without driving the app`,
+        reason: `the criterion proves nothing: \`${command.trim()}\` ${why}`,
       };
     }
     const script = packageScriptBody(expand(command));
@@ -824,6 +988,8 @@ const checks = {
     }
 
     const entries = collectRunEntries(document, [], []);
+    const jobs =
+      document?.jobs && typeof document.jobs === "object" ? document.jobs : {};
     const problems = [];
 
     for (const requirement of check.required ?? []) {
@@ -834,13 +1000,13 @@ const checks = {
         : (requirement.oneOf ?? [wanted]);
 
       const found = alternatives.find((candidate) =>
-        entries.some((entry) => stepRuns(entry, candidate)),
+        entries.some((entry) => stepRuns(entry, candidate, jobs)),
       );
       if (found !== undefined) continue;
 
       for (const candidate of alternatives) {
         const reasons = entries.map((entry) => {
-          const reason = stepDoesNotRun(entry, candidate);
+          const reason = stepDoesNotRun(entry, candidate, jobOf(entry, jobs));
           return `the step at ${describeTrail(entry.trail)}: ${reason}`;
         });
         const inComment = raw
@@ -880,12 +1046,25 @@ const checks = {
    * is killed between the write and the restore leaves a record that the next
    * run uses to put the tree back.
    */
-  async lintRules(check) {
+  async lintRules(check, criterion) {
     const problems = [];
     const probes = check.rules ?? [];
 
     if (probes.length === 0) {
       return { ok: false, reason: "the check names no rule to prove" };
+    }
+
+    if (criterion?.id === "escape-hatches") {
+      const proved = new Set(probes.map((probe) => probe.rule));
+      const missing = EXPECTED_ESCAPE_RULES.filter((rule) => !proved.has(rule));
+      if (missing.length > 0) {
+        return {
+          ok: false,
+          reason: `the criterion does not prove: ${missing.join(", ")}`,
+          detail:
+            "The rules the escape hatches criterion proves are held by the scorer. A config that re-points the probes leaves a guardrail off with the criterion green.",
+        };
+      }
     }
 
     for (const probe of probes) {
@@ -1017,6 +1196,17 @@ const checks = {
       };
     }
 
+    // The log holds the proof case that covers the mistake, so the column is
+    // read and the name it holds must be a proof case the harness holds.
+    const proofColumn = findProofColumn(header, check.proofColumn);
+    if (proofColumn === -1) {
+      return {
+        ok: false,
+        reason: `${check.path} holds no proof case column, it holds: ${header.join(", ")}`,
+      };
+    }
+    const proofNames = (config.proofs ?? []).map((proof) => proof.name);
+
     const filled = rows.filter((row) => row.some((cell) => cell !== ""));
     if (filled.length < minimum) {
       problems.push(
@@ -1044,6 +1234,17 @@ const checks = {
       if (paths.length === 0) {
         problems.push(
           `row ${index + 1} of ${check.path} names no guardrail path, it names ${cell}`,
+        );
+        continue;
+      }
+      const proof = (row[proofColumn] ?? "").trim();
+      if (proof === "") {
+        problems.push(`row ${index + 1} of ${check.path} names no proof case`);
+        continue;
+      }
+      if (!proofNames.includes(proof)) {
+        problems.push(
+          `row ${index + 1} of ${check.path} names the proof case ${proof}, which the harness does not hold`,
         );
         continue;
       }
@@ -1435,6 +1636,15 @@ function findGuardrailColumn(header, configured) {
 }
 
 /**
+ * The column that names the proof case that covers a mistake.
+ */
+function findProofColumn(header, configured) {
+  if (typeof configured === "number") return configured;
+  const index = header.findIndex((cell) => /proof/i.test(cell));
+  return index;
+}
+
+/**
  * True when a token in a table cell names a file. A rule name such as
  * `local/no-cross-layer-import` is not a file, and a command such as
  * `pnpm install` is not a file.
@@ -1448,14 +1658,18 @@ function looksLikePath(token) {
 /**
  * True when a step runs the required command.
  */
-function stepRuns(entry, required) {
-  return stepDoesNotRun(entry, required) === null;
+function stepRuns(entry, required, jobs) {
+  return stepDoesNotRun(entry, required, jobOf(entry, jobs ?? {})) === null;
 }
 
 /**
  * The reason a step does not run the required command, or null when it does.
+ *
+ * The job the step belongs to is read as well. A job that is guarded off, or
+ * that is allowed to fail, runs none of its steps, so a step inside it proves
+ * nothing even when the step itself looks right.
  */
-function stepDoesNotRun(entry, required) {
+function stepDoesNotRun(entry, required, job) {
   const guard = entry.siblings?.if;
   if (guard === false || guard === "false") {
     return "the step is guarded by `if: false`";
@@ -1464,6 +1678,17 @@ function stepDoesNotRun(entry, required) {
   const tolerated = entry.siblings?.["continue-on-error"];
   if (tolerated === true || tolerated === "true") {
     return "the step is allowed to fail, so it proves nothing";
+  }
+
+  if (job) {
+    const jobGuard = job.if;
+    if (jobGuard === false || jobGuard === "false") {
+      return "the job the step belongs to is guarded by `if: false`";
+    }
+    const jobTolerated = job["continue-on-error"];
+    if (jobTolerated === true || jobTolerated === "true") {
+      return "the job the step belongs to is allowed to fail, so it proves nothing";
+    }
   }
 
   const lines = commandLines(entry.value);
@@ -1600,7 +1825,7 @@ for (const criterion of selected) {
 
   let result;
   try {
-    result = await handler(check);
+    result = await handler(check, criterion);
   } catch (error) {
     result = { ok: false, reason: error.message };
   }
@@ -1671,9 +1896,10 @@ if (coverage.length > 0) {
 
 /**
  * The scorer and the prover must hold the same proof set, or one of them
- * holds a gate the other does not.
+ * holds a gate the other does not. The gate runs on every score, scoped or
+ * not, because a proof case that changed is a broken gate in either.
  */
-if (!only) {
+{
   const proverPath = path.join(
     path.dirname(fileURLToPath(import.meta.url)),
     "prove-guardrails.mjs",
@@ -1687,10 +1913,22 @@ if (!only) {
     const drift = EXPECTED_PROOF_NAMES.filter(
       (name) => !proverSource.includes(`"${name}"`),
     );
+    const changed = (config.proofs ?? [])
+      .filter((proof) => {
+        const expected = EXPECTED_PROOF_DIGESTS[proof.name];
+        return expected !== undefined && expected !== proofDigest(proof);
+      })
+      .map((proof) => proof.name);
     if (drift.length > 0) {
       console.log("FAIL  proof-set  the scorer and the prover disagree");
       console.log(
         `      the prover does not hold: ${drift.join(", ")}. Both files must hold the same proof set.`,
+      );
+      failed += 1;
+    } else if (changed.length > 0) {
+      console.log("FAIL  proof-set  a proof case changed without its digest");
+      console.log(
+        `      the content of these cases changed: ${changed.join(", ")}. A proof case may not be edited to make it pass; the digest in the scorer must move with it.`,
       );
       failed += 1;
     } else {
