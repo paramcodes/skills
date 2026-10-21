@@ -4,7 +4,7 @@
     "exec": "{{PM_EXEC}}"
   },
   "minimumCriteria": 13,
-  "minimumProofs": 14,
+  "minimumProofs": 18,
   "maxHarnessSeconds": 300,
   "agents": {
     "file": "AGENTS.md",
@@ -444,6 +444,66 @@
         "run": "node scripts/__harness_probe.mjs",
         "exit": "zero",
         "contains": "the tree is clean after the repair run"
+      }
+    },
+    {
+      "name": "the command criterion fails when the command only prints",
+      "criterion": "verify",
+      "write": [
+        {
+          "path": "scripts/__harness_probe.mjs",
+          "content": "import { execSync } from \"node:child_process\";\nimport { readFileSync, writeFileSync } from \"node:fs\";\nimport os from \"node:os\";\nimport path from \"node:path\";\n\nconst root = process.cwd();\nconst config = JSON.parse(readFileSync(path.join(root, \"harness.config.json\"), \"utf8\"));\nconst criterion = config.criteria.find((entry) => entry.id === \"verify\");\ncriterion.check.run = \"echo npm run verify\";\nconst file = path.join(os.tmpdir(), \"harness-probe-noop.json\");\nwriteFileSync(file, JSON.stringify(config, null, 2));\n\nlet output = \"\";\nlet code = 0;\ntry {\n  output = execSync(\"node scripts/harness-score.mjs --only verify\", {\n    encoding: \"utf8\",\n    cwd: root,\n    env: { ...process.env, HARNESS_CONFIG: file },\n    stdio: [\"ignore\", \"pipe\", \"pipe\"],\n  });\n} catch (error) {\n  code = error.status === undefined ? 1 : error.status;\n  output = (error.stdout ?? \"\") + (error.stderr ?? \"\");\n}\nprocess.stdout.write(output);\nprocess.exit(code);\n"
+        }
+      ],
+      "expect": {
+        "run": "node scripts/__harness_probe.mjs",
+        "exit": "nonzero",
+        "contains": "proves nothing"
+      }
+    },
+    {
+      "name": "the harness fails when a package script only prints",
+      "criterion": "verify",
+      "write": [
+        {
+          "path": "package.json",
+          "content": "{\n  \"name\": \"harness-probe\",\n  \"version\": \"0.0.0\",\n  \"private\": true,\n  \"scripts\": {\n    \"verify\": \"echo everything is fine\"\n  }\n}\n"
+        }
+      ],
+      "expect": {
+        "run": "node scripts/harness-score.mjs --only verify",
+        "exit": "nonzero",
+        "contains": "only prints"
+      }
+    },
+    {
+      "name": "the entry point criterion fails when a rule names an unregistered path",
+      "criterion": "entry-point",
+      "write": [
+        {
+          "path": "AGENTS.md",
+          "content": "# Project\n\n## Rules\n\n- The rule names a path the registry does not know. Enforced by: file:docs/not-registered.md\n"
+        }
+      ],
+      "expect": {
+        "run": "${PM} run harness -- --only entry-point",
+        "exit": "nonzero",
+        "contains": "not registered"
+      }
+    },
+    {
+      "name": "the ci criterion fails when a step is allowed to fail",
+      "criterion": "ci",
+      "write": [
+        {
+          "path": ".github/workflows/ci.yml",
+          "content": "name: CI\n\non:\n  pull_request:\n\njobs:\n  verify:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n\n      - name: Install dependencies\n        run: \"npm ci\"\n\n      - name: Verify\n        run: \"npm run verify\"\n        continue-on-error: true\n\n      - name: Prove the guardrails\n        run: \"npm run prove\"\n\n      - name: Score the agent harness\n        run: \"npm run harness\"\n"
+        }
+      ],
+      "expect": {
+        "run": "${PM} run harness -- --only ci",
+        "exit": "nonzero",
+        "contains": "allowed to fail"
       }
     }
   ],
