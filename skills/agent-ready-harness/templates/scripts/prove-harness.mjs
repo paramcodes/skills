@@ -127,6 +127,16 @@ const mutations = [
     },
   },
   {
+    name: "a proof case is changed without its digest",
+    criterion: "boundaries",
+    expect: "a proof case changed without its digest",
+    apply(config) {
+      const proof = config.proofs[0];
+      proof.write[0].content += "\n// the content of a proof case changed\n";
+      return `the content of the proof ${proof.name} was changed`;
+    },
+  },
+  {
     name: "a criterion holds an unknown check type",
     criterion: "boundaries",
     expect: "unknown check type",
