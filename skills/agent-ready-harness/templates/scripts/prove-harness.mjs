@@ -31,6 +31,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -134,6 +135,14 @@ const scratch = mkdtempSync(path.join(tmpdir(), "harness-self-proof-"));
 let failed = 0;
 let treeCount = 0;
 
+/**
+ * Copies the harness into a scratch tree.
+ *
+ * The copy resolves the dependencies of the repository it came from, because
+ * the scorer reads the YAML of a workflow file and the copy must be able to
+ * load that parser. The dependency directory is linked into the tree, so the
+ * copy holds the same packages as the repository without a second install.
+ */
 function copyHarness() {
   treeCount += 1;
   const tree = path.join(scratch, `tree-${treeCount}`);
@@ -142,6 +151,12 @@ function copyHarness() {
   copyFileSync(configPath, path.join(tree, "harness.config.json"));
   copyFileSync(scorerPath, path.join(scripts, "harness-score.mjs"));
   copyFileSync(proverPath, path.join(scripts, "prove-guardrails.mjs"));
+
+  const dependencies = path.join(root, "node_modules");
+  if (existsSync(dependencies)) {
+    symlinkSync(dependencies, path.join(tree, "node_modules"), "dir");
+  }
+
   return tree;
 }
 
@@ -154,13 +169,7 @@ function score(tree) {
         encoding: "utf8",
         stdio: ["ignore", "pipe", "pipe"],
         cwd: root,
-        env: {
-        ...process.env,
-        HARNESS_CONFIG: config,
-        NODE_PATH: [path.join(root, "node_modules"), process.env.NODE_PATH]
-          .filter(Boolean)
-          .join(path.delimiter),
-      },
+        env: { ...process.env, HARNESS_CONFIG: config },
       },
     );
     return { code: 0, output: stdout };
@@ -173,17 +182,25 @@ function score(tree) {
   }
 }
 
+/**
+ * The baseline is the copy the mutations are compared against. It must be
+ * green, or a mutation that fails proves nothing: the copy was already
+ * broken.
+ */
 const baseline = score(copyHarness());
-console.log(
-  `prove-harness: the unmutated copy scored with exit ${baseline.code}`,
-);
 if (baseline.code !== 0) {
-  console.log(
-    "  the unmutated copy is not green, so the mutations are checked against a broken baseline",
+  console.error(
+    `prove-harness: the unmutated copy scored with exit ${baseline.code}, so the mutations prove nothing`,
   );
-  for (const line of baseline.output.split("\n").slice(0, 20))
-    console.log(`  ${line}`);
+  for (const line of baseline.output.split("\n").slice(0, 30))
+    console.error(`  ${line}`);
+  console.error(
+    "prove-harness: fix the harness until it scores green, then run the self proof again",
+  );
+  rmSync(scratch, { recursive: true, force: true });
+  process.exit(1);
 }
+console.log("prove-harness: the unmutated copy scored green");
 
 for (const mutation of mutations) {
   const tree = copyHarness();
