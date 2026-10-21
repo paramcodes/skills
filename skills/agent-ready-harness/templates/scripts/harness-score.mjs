@@ -1191,7 +1191,10 @@ const selected = only
     )
   : criteria;
 
-if (only && selected.length === 0) die(`no criterion is named ${only}`);
+const GATE_NAMES = ["coverage", "proof-set"];
+
+if (only && selected.length === 0 && !GATE_NAMES.includes(only))
+  die(`no criterion is named ${only}`);
 
 const startedAt = process.hrtime.bigint();
 
