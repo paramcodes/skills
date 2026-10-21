@@ -329,7 +329,7 @@
     "The local gate and the merge gate were replaced by the yamlSteps check, which reads the steps of the file and holds a step that only prints a command, is guarded off, or swallows its own failure.",
     "The ratchet document was replaced by the documentSections check, which reads the headings of the document and holds the procedure it names.",
     "The mistake log was replaced by the logRows check, which reads the table of the log and holds a row that names no guardrail that exists.",
-    "The entry point was replaced by the entryPointKinds check, which reads the kind of every rule and holds the kind. A path that exists proves nothing, so the kind decides how the path is checked.",
+    "The entry point was replaced by the entryPointKinds check, which reads the kind of every rule and holds the kind. A path that exists is not enforcement, so the kind decides how the path is checked.",
     "The proofs criterion was replaced by the exactSet check, which holds the cases to the exact set the prover holds, and runs the prover.",
     "The behavioural criterion drives the app end to end. Replace the command with the end to end command of this repository.",
     "The artifact criterion holds the build output to the sources. Replace the artifact path, the build command and the strings with the ones of this repository.",
