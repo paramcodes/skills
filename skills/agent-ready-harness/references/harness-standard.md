@@ -9,7 +9,14 @@ Deleting one criterion and duplicating another does not keep the set whole.
 
 The cost ceiling is `maxHarnessSeconds` in `harness.config.json`. The scorer prints its own
 runtime and fails when it runs past the ceiling. A criterion that costs more than the ceiling is a
-criterion that does not get run.
+criterion that does not get run. The ceiling sits above what the shipped default costs, and the
+reason for the number is recorded in the `notes` array of `harness.config.json`. A ceiling that the
+default cannot meet is a ceiling that ships red.
+
+A criterion that runs a command runs the thing it claims to run. A no-op executable is a no-op
+executable whatever its arguments are, so `echo` in any form proves nothing, and a script whose
+body only echoes is not the command it is named after. A criterion that runs a package script holds
+that script to the same rule.
 
 Adapt a criterion when the stack makes it meaningless. Replace it with one that holds, keep the id,
 and record the replacement in the `notes` array of `harness.config.json`. Never delete one.
@@ -25,7 +32,7 @@ form.
 | ----------------- | ----------------- | ------------------------------------------------------------------------------------------ |
 | `boundaries`      | `command`         | The layers that must not reach across a boundary cannot.                                     |
 | `data-access`     | `actorParams`     | Every function that touches a user's rows takes the actor whose rows it touches.            |
-| `proofs`          | `command`         | Every guardrail catches the mistake it was made for.                                         |
+| `proofs`          | `exactSet`        | Every guardrail catches the mistake it was made for.                                         |
 | `escape-hatches`  | `lintRules`       | The source tree has no quiet exits.                                                          |
 | `entry-point`     | `entryPointKinds` | Every rule names an enforcement path of a known kind, and that path enforces something.      |
 | `local-gate`      | `yamlSteps`       | A broken change fails before it reaches the branch.                                          |
@@ -70,10 +77,10 @@ example a rule that every request handler takes the authenticated subject.
 **Proves:** the checks are not theater. Each proof writes a file that breaks one rule, runs the
 checker that owns it, and asserts the checker failed with the expected message.
 
-**Check:** the `command` check runs the proof command, and the prover holds a floor. The floor is
-`minimumProofs` in the config, it equals the number of proof cases, and an empty proof set fails.
-The prover holds the expected proof names in its own code, so a missing, a renamed, and a
-duplicated proof all fail.
+**Check:** the `exactSet` check compares the proof cases against the exact set the scorer holds in
+its own code, and then runs the proof command. A missing, a renamed, and a duplicated proof all
+fail. The prover holds a floor. The floor is `minimumProofs` in the config, it equals the number of
+proof cases, and an empty proof set fails.
 
 **Adapt:** one case per guardrail. A new guardrail ships with its case in the same change.
 
@@ -103,6 +110,12 @@ the file's shape. A `command` kind is validated by running it. A `document` kind
 the document's sections. Path existence alone is never enough, so a rule that points at two
 architecture documents fails.
 
+Every enforcement path the entry point names has to be registered. The registry in
+`harness.config.json` holds each path, its kind, and how the path is validated. A path the
+registry does not know fails the criterion, because the harness cannot tell what such a path
+enforces, and a rule that points at it proves nothing. Two rules that point at one unregistered
+file fail for the same reason.
+
 **Adapt:** the limit is the `maxLines` value in the config. Every rule ends with
 `Enforced by: <kind>:<path>`, where the kind is one of the four above and the path is the file
 that enforces the rule. A rule enforced by a script that refuses the default branch is a `file`
@@ -131,7 +144,9 @@ The default entry point states these kinds:
 **Check:** the `yamlSteps` check parses the hook file and looks for the commands the gate must
 run. A command counts when a step's `run` value starts with it, or when it stands alone as a line
 in a multi-line `run` block. A step that is commented out, a step with `if: false`, and a run
-value with `|| true` after the command all fail, because none of them run the command.
+value with `|| true` after the command all fail, because none of them run the command. A step with
+`continue-on-error: true` fails for the same reason: a step that is allowed to fail is not proof
+that the command ran.
 
 **Adapt:** use the repo's hook runner. Keep the same three checks: format, lint, and typecheck on
 the staged files.
@@ -143,10 +158,13 @@ runs different commands proves nothing about the local loop.
 
 **Check:** the `yamlSteps` check parses the workflow file and looks for the canonical commands, the
 harness score, and the self proof. The prover runs once, because the `proofs` criterion runs it
-inside the score. A workflow that runs the prover as its own step runs it twice.
+inside the score. A workflow that runs the prover as its own step runs it twice. A step that
+swallows its own failure, a step with `continue-on-error: true`, is not proof that the command ran.
 
 **Adapt:** keep the canonical commands identical to the local ones. Split quick and full jobs
-when the full one is slow, and let the full one own the harness score.
+when the full one is slow, and let the full one own the harness score. A gate that runs after
+another gate says so with `needs`, so no job reports on a tree the job before it has not proven
+yet.
 
 ## 8. The ratchet document is real
 
@@ -182,7 +200,10 @@ guardrail behind it is a hope rather than a rule.
 **Proves:** the repository is green on the commands a contributor runs.
 
 **Check:** the `command` check runs the verify command and fails when it exits non-zero. A no-op
-run fails as well, because a command that proves nothing is not a check.
+run fails as well, because a command that proves nothing is not a check. The command has to be the
+command it claims to run: a no-op executable is a no-op executable whatever its arguments are, so
+a command that only prints the thing it should run proves nothing, and a package script whose body
+only echoes is not the command it is named after.
 
 **Adapt:** the verify command is the repo's own. It must include the format check, the lint, the
 typecheck, the unit tests, and the build.
@@ -193,7 +214,8 @@ typecheck, the unit tests, and the build.
 repository whose structure is perfect and whose app does not start is still broken.
 
 **Check:** the `behavioral` check runs the repository's end-to-end command and fails when it
-fails.
+fails. The command has to be the command it claims to run, so an end-to-end command that only
+prints that the suite passed fails the criterion.
 
 **Adapt:** name the end-to-end command. A repository with no end-to-end suite replaces this
 criterion with the strongest behavioural command it has, and records the replacement in `notes`.
