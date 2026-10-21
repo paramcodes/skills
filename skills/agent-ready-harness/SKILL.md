@@ -96,8 +96,13 @@ proof case ships with the rule instead of living in someone's head. Add a case t
 every new guardrail. A lint rule adds two cases: one that breaks it, and one that holds a
 legitimate construct it must not flag.
 
+A proof case is content-pinned. The scorer holds a digest of every case, so a case whose content
+changed without its digest changing fails the run, and a case that was edited to make it pass
+proves nothing. Changing a case means moving its digest in the scorer in the same change, the way
+the name of a case is moved in the scorer and in the prover.
+
 The harness itself gets the same treatment. `scripts/prove-harness.mjs` copies the harness into a
-scratch tree, breaks it seven ways, and asserts the scorer rejects every break. It exits
+scratch tree, breaks it eight ways, and asserts the scorer rejects every break. It exits
 non-zero when a break slips through, so a harness that cannot fail is a failure.
 
 ## The ratchet

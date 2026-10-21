@@ -82,6 +82,12 @@ its own code, and then runs the proof command. A missing, a renamed, and a dupli
 fail. The prover holds a floor. The floor is `minimumProofs` in the config, it equals the number of
 proof cases, and an empty proof set fails.
 
+A proof case is content-pinned. The scorer holds a digest of every case, the hash of what the case
+writes, what it expects, and the criterion it breaks, so a case whose content changed without its
+digest changing fails the run. A case may not be edited to make it pass, because a case that was
+edited to pass proves nothing. Changing a case means moving its digest in the scorer in the same
+change, the way the name of a case is moved in the scorer and in the prover.
+
 **Adapt:** one case per guardrail. A new guardrail ships with its case in the same change.
 
 ## 4. Escape hatches are errors
@@ -91,7 +97,10 @@ proof cases, and an empty proof set fails.
 
 **Check:** the `lintRules` check runs the repository's own linter against an injected probe file
 that breaks each named rule, and asserts the linter failed with that rule. The rule names live in
-the linter, not in a comment, so a rule that is commented out fails the check.
+the linter, not in a comment, so a rule that is commented out fails the check. The list of rules
+the criterion proves is held by the scorer, the way the criterion ids and the kinds of the
+enforcement registry are, so a config that re-points the probes leaves a guardrail off with the
+criterion green, and the criterion fails.
 
 **Adapt:** keep the rules that exist in the stack's linter, and add a local rule for the ones it
 cannot express. A custom rule needs a documented failure mode, a negative case, and its own proof
@@ -144,9 +153,16 @@ The default entry point states these kinds:
 **Check:** the `yamlSteps` check parses the hook file and looks for the commands the gate must
 run. A command counts when a step's `run` value starts with it, or when it stands alone as a line
 in a multi-line `run` block. A step that is commented out, a step with `if: false`, and a run
-value with `|| true` after the command all fail, because none of them run the command. A step with
-`continue-on-error: true` fails for the same reason: a step that is allowed to fail is not proof
-that the command ran.
+value whose fallback swallows the failure all fail, because none of them run the command. A step
+with `continue-on-error: true` fails for the same reason: a step that is allowed to fail is not
+proof that the command ran.
+
+A fallback swallows the failure unless it propagates it. `exit 1` and `false` propagate, so
+`npm run verify || exit 1` still fails the run, while `npm run verify || echo ok` hides it. A
+chain with `&&` is a chain: it fails when the first command fails, so it swallows nothing.
+
+The hook runner's own `skip` key is not read yet, so a command with `skip: true` still counts.
+That hole is open, and it is in the check, not in the template.
 
 **Adapt:** use the repo's hook runner. Keep the same three checks: format, lint, and typecheck on
 the staged files.
@@ -160,6 +176,11 @@ runs different commands proves nothing about the local loop.
 harness score, and the self proof. The prover runs once, because the `proofs` criterion runs it
 inside the score. A workflow that runs the prover as its own step runs it twice. A step that
 swallows its own failure, a step with `continue-on-error: true`, is not proof that the command ran.
+
+The guard of the job counts as well as the guard of the step. A job with `if: false` runs none of
+its steps, and a job with `continue-on-error: true` may fail without stopping the run, so a step
+inside such a job proves nothing. The criterion names the job and the key that switched the gate
+off.
 
 **Adapt:** keep the canonical commands identical to the local ones. Split quick and full jobs
 when the full one is slow, and let the full one own the harness score. A gate that runs after
@@ -186,8 +207,10 @@ that now catches it and the proof case that covers it.
 **Check:** the `logRows` check parses the table and holds every row that exists to the schema. It
 checks the shape of the rows, not the number of them. A log with no row passes, because a fresh
 install has made no mistake yet, and the criterion says so in its output. A row that names no
-guardrail path, or a guardrail path that does not exist on disk, fails. The columns are the date,
-the mistake, the check that was missing, the fix, the guardrail, and the proof case that covers it.
+guardrail path, or a guardrail path that does not exist on disk, fails. A row names the proof case
+that covers it, so a row that names no proof case fails, and a row that names a case the harness
+does not hold fails. The columns are the date, the mistake, the check that was missing, the fix,
+the guardrail, and the proof case that covers it.
 
 The log holds the mistakes of the installed repository. A fresh install starts with no rows, and a
 template that ships a filled row makes every new project open with a history that is not its own.
