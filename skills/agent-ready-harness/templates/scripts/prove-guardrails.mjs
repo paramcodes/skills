@@ -104,6 +104,12 @@ const EXPECTED_PROOF_NAMES = [
   "the harness fails when a package script only prints",
   "the entry point criterion fails when a rule names an unregistered path",
   "the ci criterion fails when a step is allowed to fail",
+  "the ci criterion fails when the job is guarded off",
+  "the command criterion fails when the command swallows its failure",
+  "the escape hatches criterion fails when its rules are re-pointed",
+  "the prover writes its journal before it writes the probe",
+  "the prover refuses a second run and names the holder",
+  "the mistake log criterion fails when a row names no proof case",
 ];
 
 if (!Number.isInteger(minimumProofs) || minimumProofs < 1) {
@@ -257,10 +263,24 @@ function directoriesFor(file) {
  * It lives outside the tree, so a run that is killed outright still leaves a
  * record that the next run restores.
  */
-const journalPath = path.join(
-  os.tmpdir(),
-  `harness-prove-journal-${createHash("sha256").update(root).digest("hex").slice(0, 12)}.json`,
-);
+/**
+ * The journal of the run.
+ *
+ * The path may be set with `PROVE_JOURNAL_PATH`, so a run that drives another
+ * run of the prover does not share its journal with it.
+ */
+function resolveJournalPath() {
+  const override = process.env.PROVE_JOURNAL_PATH;
+  if (override) {
+    return path.isAbsolute(override) ? override : path.join(root, override);
+  }
+  return path.join(
+    os.tmpdir(),
+    `harness-prove-journal-${createHash("sha256").update(root).digest("hex").slice(0, 12)}.json`,
+  );
+}
+
+const journalPath = resolveJournalPath();
 
 /**
  * The lock of the run.
@@ -374,6 +394,26 @@ function acquireLock() {
 }
 
 /**
+ * The run that holds the lock, so that a refusal names the holder and not
+ * only the wait.
+ */
+function describeLockHolder() {
+  try {
+    const holder = JSON.parse(readFileSync(lockPath, "utf8"));
+    if (typeof holder?.pid === "number") {
+      const since =
+        typeof holder.startedAt === "number"
+          ? `, running since ${new Date(holder.startedAt).toISOString()}`
+          : "";
+      return `pid ${holder.pid}${since}`;
+    }
+  } catch {
+    // The lock cannot be read, so the holder cannot be named.
+  }
+  return "the holder cannot be read";
+}
+
+/**
  * Releases the lock of the run.
  *
  * Only the owner releases the lock, so a run that lost the lock to a broken
@@ -475,7 +515,7 @@ function onSignal(signal) {
  */
 if (!acquireLock()) {
   console.error(
-    `prove: another run holds the lock of this tree and did not finish within ${lockWaitMs} ms`,
+    `prove: another run holds the lock of this tree (${describeLockHolder()}) and did not finish within ${lockWaitMs} ms`,
   );
   process.exit(1);
 }
@@ -526,9 +566,11 @@ for (const proof of proofs) {
         pendingDirectories.add(directory);
       }
       mkdirSync(path.dirname(target), { recursive: true });
+      // The journal is written before the probe, so a run that is killed
+      // between the two leaves a record the next run repairs.
+      writeJournal();
       writeFileSync(target, expand(write.content, write.path));
     }
-    writeJournal();
 
     const expectation = proof.expect ?? {};
     const result = await run(expectation.run, probe);
