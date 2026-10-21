@@ -40,3 +40,4 @@ npx skills add paramcodes/skills -s <name> -g
 | `agent-ready-codebase` | Audit and harden a repo so agents can modify it reliably across harnesses |
 | `agent-ready-typescript` | TypeScript/ESLint/format/test/CI defaults for Node and browser repos |
 | `agent-ready-harness` | Self-verifying harness: scored criteria, guardrail proofs, mistake ratchet |
+| `agent-rules` | Machine-checkable rule table with a deterministic auditor, for repos where several agents write in parallel |

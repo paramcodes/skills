@@ -22,7 +22,7 @@ sources/
 
 ### Agent-ready suite
 
-Four skills that work together to make a repo agent-navigable and self-verifying:
+Five skills that work together to make a repo agent-navigable and self-verifying:
 
 | Skill | Role |
 |---|---|
@@ -30,6 +30,7 @@ Four skills that work together to make a repo agent-navigable and self-verifying
 | `agent-ready-codebase` | Audit workflow — harden an existing repo with real guardrails, not more prose |
 | `agent-ready-typescript` | Stack defaults — TypeScript, ESLint, formatting, tests, CI for Node/browser |
 | `agent-ready-harness` | Mechanical layer — scored criteria, guardrail proofs, and a mistake ratchet |
+| `agent-rules` | Rule table — a machine-checkable rule set with a deterministic auditor, for repos where several agents write in parallel |
 
 ## Install
 

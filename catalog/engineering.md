@@ -74,4 +74,4 @@ Includes: `caveman` · `cavecrew` · `caveman-commit` · `caveman-compress` · `
 - `autopilot` — autonomous run mode
 - `productionize` — productionize a feature
 - `no-comments` — encode constraints instead of commenting
-- `agent-ready-project` / `agent-ready-codebase` / `agent-ready-typescript` / `agent-ready-harness` — the agent-ready suite: doctrine, audit workflow, TypeScript defaults, and the self-verifying harness
+- `agent-ready-project` / `agent-ready-codebase` / `agent-ready-typescript` / `agent-ready-harness` / `agent-rules` — the agent-ready suite: doctrine, audit workflow, TypeScript defaults, the self-verifying harness, and the machine-checkable rule table
