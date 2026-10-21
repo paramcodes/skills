@@ -1,57 +1,43 @@
-import { readFileSync } from "node:fs";
-import path from "node:path";
 import { defineConfig, globalIgnores } from "eslint/config";
 import tseslint from "typescript-eslint";
+import { rules as localRules } from "./eslint-rules/index.mjs";
 
-const config = JSON.parse(
-  readFileSync(new URL("./harness.config.json", import.meta.url), "utf8"),
-);
-
-const data = config.layers?.data ?? {};
-const alias = data.alias ?? "@/db";
-const base = path.basename(data.dir ?? "src/db");
-
-const message =
-  "The data layer is off limits here. Read it through the action or route layer that owns the session.";
-
-const importPatterns = [
-  alias,
-  `${alias}/*`,
-  `**/${base}`,
-  `**/${base}/*`,
-  `../${base}/*`,
-  `../../${base}/*`,
-];
-
-function boundary(files) {
-  return {
-    files,
-    languageOptions: {
-      parser: tseslint.parser,
-      sourceType: "module",
-    },
-    rules: {
-      "no-restricted-imports": [
-        "error",
-        {
-          paths: [{ name: alias, message }],
-          patterns: [{ group: importPatterns, message }],
-        },
-      ],
-    },
-  };
-}
-
-const restricted = config.layers?.restricted ?? [];
+/**
+ * The boundary configuration.
+ *
+ * The layers live in `harness.config.json`, and the rule that holds them
+ * lives in `eslint-rules/index.mjs`. `eslint.config.mjs` includes this
+ * configuration, so the arch command and the lint command read the same
+ * layers and run the same rule. They cannot disagree.
+ *
+ * The rule decides for itself which files it applies to. A file that owns no
+ * layer is never flagged, so a file outside the layers cannot block a change.
+ */
 
 export default defineConfig([
+  // The ignore list covers what the harness builds. The default config
+  // builds into dist, so a lint that scans the built output lints the
+  // compiler's output and fails on it.
   globalIgnores([
     "node_modules/**",
+    "dist/**",
     ".next/**",
     "out/**",
     "build/**",
     "coverage/**",
     "next-env.d.ts",
   ]),
-  ...restricted.map((layer) => boundary(layer.files)),
+  {
+    files: ["**/*.{ts,tsx,mts,cts}"],
+    languageOptions: {
+      parser: tseslint.parser,
+      sourceType: "module",
+    },
+    plugins: {
+      local: { rules: localRules },
+    },
+    rules: {
+      "local/no-cross-layer-import": "error",
+    },
+  },
 ]);

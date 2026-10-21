@@ -22,11 +22,36 @@ jobs:
       - name: Install dependencies
         run: "@@INSTALL@@"
 
+      # The canonical commands run once, in the order the gates need them. The
+      # proof command runs inside the harness score, because the proofs
+      # criterion runs it, so the workflow does not run it a second time.
       - name: Verify
-        run: "@@PM@@ verify"
-
-      - name: Prove the guardrails
-        run: "@@PM@@ prove"
+        run: "@@PM@@ run verify"
 
       - name: Score the agent harness
-        run: "@@PM@@ harness"
+        run: "@@PM@@ run harness"
+
+      - name: Prove the harness fails when it is broken
+        run: "@@PM@@ run prove-harness"
+
+  e2e:
+    # The end-to-end gate runs after the gate before it, so it never reports on
+    # a tree the verify job has not proven yet.
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # @@SETUP@@
+
+      - name: Install dependencies
+        run: "@@INSTALL@@"
+
+      # @@BROWSERS@@
+
+      # The end-to-end command is the behavioural check. Replace it with the
+      # repository's own command when it differs from the canonical one.
+      - name: End-to-end tests
+        run: "@@E2E@@"
