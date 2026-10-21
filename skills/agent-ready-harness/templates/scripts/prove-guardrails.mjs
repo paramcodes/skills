@@ -93,11 +93,17 @@ const EXPECTED_PROOF_NAMES = [
   "the source tree carries a ts-expect-error",
   "the source tree carries a skipped test",
   "the source tree parses raw JSON",
+  "the harness fails when it takes longer than the ceiling",
+  "the arch lint ignores the built output",
   "the mistake log criterion fails when a row names no guardrail",
   "the mistake log criterion fails when a row names a guardrail that does not exist",
   "the entry point criterion fails when a rule names no kind",
   "the scorer restores its probe when it is killed with a signal",
   "the scorer repairs a tree that a killed run left dirty",
+  "the command criterion fails when the command only prints",
+  "the harness fails when a package script only prints",
+  "the entry point criterion fails when a rule names an unregistered path",
+  "the ci criterion fails when a step is allowed to fail",
 ];
 
 if (!Number.isInteger(minimumProofs) || minimumProofs < 1) {
@@ -165,6 +171,10 @@ if (proofs.length < minimumProofs) {
 const criterionIds = criteria.map(
   (criterion) => criterion.id ?? criterion.check?.type ?? "criterion",
 );
+
+// The gates of the scorer are not criteria, but a proof case may name one of
+// them, because a gate is a thing that can fail.
+const gateIds = ["coverage", "proof-set", "runtime"];
 const unnamed = proofs.filter((proof) => !proof.criterion);
 if (unnamed.length > 0) {
   console.error("prove: every proof case must name the criterion it breaks");
@@ -173,7 +183,9 @@ if (unnamed.length > 0) {
   process.exit(1);
 }
 const unknownCriterion = proofs.filter(
-  (proof) => !criterionIds.includes(proof.criterion),
+  (proof) =>
+    !criterionIds.includes(proof.criterion) &&
+    !gateIds.includes(proof.criterion),
 );
 if (unknownCriterion.length > 0) {
   console.error(

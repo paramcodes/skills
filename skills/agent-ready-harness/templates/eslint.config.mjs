@@ -12,8 +12,12 @@ import arch from "./eslint.arch.mjs";
  */
 
 export default defineConfig([
+  // The ignore list covers what the harness builds. The default config
+  // builds into dist, so a lint that scans the built output lints the
+  // compiler's output and fails on it.
   globalIgnores([
     "node_modules/**",
+    "dist/**",
     ".next/**",
     "out/**",
     "build/**",

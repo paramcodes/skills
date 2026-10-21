@@ -124,11 +124,17 @@ const EXPECTED_PROOF_NAMES = [
   "the source tree carries a ts-expect-error",
   "the source tree carries a skipped test",
   "the source tree parses raw JSON",
+  "the harness fails when it takes longer than the ceiling",
+  "the arch lint ignores the built output",
   "the mistake log criterion fails when a row names no guardrail",
   "the mistake log criterion fails when a row names a guardrail that does not exist",
   "the entry point criterion fails when a rule names no kind",
   "the scorer restores its probe when it is killed with a signal",
   "the scorer repairs a tree that a killed run left dirty",
+  "the command criterion fails when the command only prints",
+  "the harness fails when a package script only prints",
+  "the entry point criterion fails when a rule names an unregistered path",
+  "the ci criterion fails when a step is allowed to fail",
 ];
 
 function expand(text, probe) {
@@ -142,6 +148,9 @@ function expand(text, probe) {
 /**
  * A command that exits 0 without proving anything. A criterion that runs one
  * of these scores as if it had checked the thing it names.
+ *
+ * `echo` is a no-op whatever it prints. A command that says what it would do
+ * proves nothing, so `echo pnpm verify` is as empty as `echo`.
  */
 const NOOP_COMMANDS = new Set([
   "true",
@@ -150,8 +159,6 @@ const NOOP_COMMANDS = new Set([
   "0",
   "exit 0",
   "exit 1",
-  "echo",
-  "echo hit",
   "noop",
   "nothing",
   "yes",
@@ -162,9 +169,49 @@ function isNoopCommand(command) {
   if (trimmed === "") return true;
   if (NOOP_COMMANDS.has(trimmed)) return true;
   if (NOOP_COMMANDS.has(trimmed.toLowerCase())) return true;
-  if (/^echo\s*$/.test(trimmed)) return true;
+  if (/^echo\b/.test(trimmed)) return true;
   if (/(\|\|\s*true|;\s*true)\s*$/.test(trimmed)) return true;
   return false;
+}
+
+/**
+ * The body of the package script a command runs, when the command runs one.
+ *
+ * A script whose body only prints is not the command it is named after, so the
+ * body is read before the command is run.
+ */
+function packageScriptBody(command) {
+  const match = String(command)
+    .trim()
+    .match(/^(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?([A-Za-z0-9:._-]+)\s*$/);
+  if (!match) return null;
+
+  const name = match[1];
+  let manifest;
+  try {
+    manifest = JSON.parse(
+      readFileSync(path.join(root, "package.json"), "utf8"),
+    );
+  } catch {
+    return null;
+  }
+
+  const body = manifest.scripts?.[name];
+  if (typeof body !== "string") return null;
+  return { name, body };
+}
+
+/**
+ * True when every part of a script body proves nothing. A body of
+ * `echo everything is fine` is a no-op however it is written.
+ */
+function isNoopBody(body) {
+  const parts = String(body)
+    .split(/&&|\|\||;/)
+    .map((part) => part.trim())
+    .filter((part) => part !== "");
+  if (parts.length === 0) return true;
+  return parts.every((part) => isNoopCommand(part));
 }
 
 /**
@@ -612,6 +659,13 @@ const checks = {
         reason: `the criterion proves nothing: \`${command.trim()}\` exits 0 without checking anything`,
       };
     }
+    const script = packageScriptBody(expand(command));
+    if (script && isNoopBody(script.body)) {
+      return {
+        ok: false,
+        reason: `the criterion proves nothing: the script ${script.name} only prints, it runs nothing`,
+      };
+    }
     const result = await run(command);
     if (result.code !== 0) {
       return {
@@ -636,6 +690,13 @@ const checks = {
       return {
         ok: false,
         reason: `the criterion proves nothing: \`${command.trim()}\` exits 0 without driving the app`,
+      };
+    }
+    const script = packageScriptBody(expand(command));
+    if (script && isNoopBody(script.body)) {
+      return {
+        ok: false,
+        reason: `the criterion proves nothing: the script ${script.name} only prints, it drives nothing`,
       };
     }
     const result = await run(command);
@@ -1063,7 +1124,16 @@ const checks = {
       const separator = token.indexOf(":");
       const kind = separator === -1 ? "" : token.slice(0, separator);
       const target = separator === -1 ? token : token.slice(separator + 1);
-      const entry = registry[target] ?? {};
+
+      // A path the registry does not know has no kind, and a path with no kind
+      // is checked by nothing. Such a rule fails here.
+      const entry = registry[target];
+      if (!entry) {
+        problems.push(
+          `the rule "${rule}" names the path ${target}, whose kind is not registered. The registered kinds are ${KINDS.join(", ")} and the registered paths are ${Object.keys(registry).join(", ")}.`,
+        );
+        continue;
+      }
 
       if (!kind) {
         problems.push(
@@ -1128,6 +1198,13 @@ const checks = {
         return {
           ok: false,
           reason: `the criterion proves nothing: \`${check.build.trim()}\` exits 0 without building anything`,
+        };
+      }
+      const script = packageScriptBody(expand(check.build));
+      if (script && isNoopBody(script.body)) {
+        return {
+          ok: false,
+          reason: `the criterion proves nothing: the script ${script.name} only prints, it builds nothing`,
         };
       }
       const built = await run(check.build);
@@ -1384,6 +1461,11 @@ function stepDoesNotRun(entry, required) {
     return "the step is guarded by `if: false`";
   }
 
+  const tolerated = entry.siblings?.["continue-on-error"];
+  if (tolerated === true || tolerated === "true") {
+    return "the step is allowed to fail, so it proves nothing";
+  }
+
   const lines = commandLines(entry.value);
   if (lines.length === 0) {
     return "the run value holds no command, it only prints or comments one";
@@ -1414,6 +1496,10 @@ async function validateKind(kind, target, entry) {
     const command = entry.run ?? target;
     if (isNoopCommand(command)) {
       return `the command \`${command}\` proves nothing`;
+    }
+    const script = packageScriptBody(expand(command));
+    if (script && isNoopBody(script.body)) {
+      return `the command \`${command}\` runs the script ${script.name}, which only prints`;
     }
     const result = await run(command);
     if (result.code !== 0) {
