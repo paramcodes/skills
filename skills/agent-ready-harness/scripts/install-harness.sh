@@ -84,9 +84,9 @@ pm="${pm_override:-$(detect_pm)}"
 
 case "$pm" in
   pnpm) pm_exec="pnpm exec" ;;
-  npm) pm_exec="npm exec" ;;
+  npm) pm_exec="npx" ;;
   yarn) pm_exec="yarn" ;;
-  bun) pm_exec="bun run" ;;
+  bun) pm_exec="bunx" ;;
   *) echo "install-harness: unknown package manager: $pm" >&2; exit 1 ;;
 esac
 
@@ -356,8 +356,8 @@ else
   toolchain_gate_command=""
   for candidate in lint typecheck test build verify; do
     if [ -n "$(read_json "scripts.${candidate}")" ]; then
-      toolchain_gate_command="\${PM} $candidate"
-      toolchain_gate_display="$pm $candidate"
+      toolchain_gate_command="\${PM} run $candidate"
+      toolchain_gate_display="$pm run $candidate"
       break
     fi
   done
