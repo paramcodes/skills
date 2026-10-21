@@ -211,6 +211,45 @@ if [ -n "$(read_json devDependencies.eslint)" ]; then
   has_eslint=1
 fi
 
+# The formatter of the repository. Every file the installer writes has to pass
+# the format check of the repository it lands in, so the installer formats with
+# the formatter the repository already has. The formatter of the repository is
+# the one it installed, and then the one on the path. The installer never
+# fetches a formatter, so it never changes the repository without saying so.
+formatter=""
+formatter_name=""
+
+has_command() {
+  command -v "$1" >/dev/null 2>&1
+}
+
+repo_formatter() {
+  local name=""
+  for name in prettier biome dprint; do
+    if [ -x "$repo/node_modules/.bin/$name" ]; then
+      echo "$name|$repo/node_modules/.bin/$name $(formatter_arguments "$name")"
+      return 0
+    fi
+  done
+}
+
+formatter_arguments() {
+  case "$1" in
+    prettier) echo "--write" ;;
+    biome) echo "format --write" ;;
+    dprint) echo "fmt" ;;
+  esac
+}
+
+format_with_repo() {
+  local formatter_command="$1"
+  shift
+  if [ -z "$formatter_command" ]; then
+    return 1
+  fi
+  (cd "$repo" && $formatter_command "$@") >/dev/null 2>&1
+}
+
 install_file "harness.config.json" "harness.config.json" always
 install_file "scripts/harness-score.mjs" "scripts/harness-score.mjs" always
 install_file "scripts/prove-guardrails.mjs" "scripts/prove-guardrails.mjs" always
@@ -252,15 +291,21 @@ if [ "$dry_run" -eq 0 ]; then
     chmod +x "$repo/scripts/prove-harness.mjs"
   fi
 
+  formatter_info="$(repo_formatter)"
+  formatter="${formatter_info#*|}"
+  formatter_name="${formatter_info%%|*}"
   format_targets=()
   for target in "${installed_files[@]:-}"; do
     case "$target" in
       *.md|*.mjs|*.json|*.yml|*.yaml|*.ts|*.js) format_targets+=("$target") ;;
     esac
   done
-  if [ "${#format_targets[@]}" -gt 0 ] && (cd "$repo" && $pm_exec prettier --version >/dev/null 2>&1); then
-    (cd "$repo" && $pm_exec prettier --write "${format_targets[@]}" >/dev/null)
-    printf 'format  %s files with the repository prettier\n' "${#format_targets[@]}"
+  if [ "${#format_targets[@]}" -gt 0 ] && [ -n "$formatter" ]; then
+    if format_with_repo "$formatter" "${format_targets[@]}"; then
+      printf 'format  %s files with the repository %s\n' "${#format_targets[@]}" "$formatter_name"
+    else
+      printf 'warn    the repository formatter failed on the installed files, run it by hand\n'
+    fi
   fi
 
   node -e '
@@ -310,10 +355,6 @@ detect_toolchain() {
   else
     echo ""
   fi
-}
-
-has_command() {
-  command -v "$1" >/dev/null 2>&1
 }
 
 toolchain_gate() {
@@ -427,6 +468,145 @@ if [ "$dry_run" -eq 0 ]; then
   fi
 fi
 
+# The toolchain patch writes the config again, so the config is formatted after
+# the patch. A file the format check of the repository rejects fails the
+# repository own verify command on a fresh install, and the scratch tree needs
+# no ignore file to get past it.
+if [ "$dry_run" -eq 0 ]; then
+  if [ -n "$formatter" ]; then
+    if format_with_repo "$formatter" harness.config.json; then
+      printf 'format  harness.config.json with the repository %s\n' "$formatter_name"
+    else
+      printf 'warn    the repository formatter failed on harness.config.json, run it by hand\n'
+    fi
+  elif node -e '
+    const fs = require("fs");
+    const path = require("path");
+
+    const configFile = process.argv[1];
+    const root = process.argv[2];
+
+    function jsonFiles(root, skip) {
+      const names = [];
+      let entries = [];
+      try {
+        entries = fs.readdirSync(root, { withFileTypes: true });
+      } catch {
+        return names;
+      }
+      for (const entry of entries) {
+        if (!entry.isFile()) continue;
+        if (entry.name === skip) continue;
+        if (entry.name.endsWith(".json") || entry.name.endsWith(".jsonc")) {
+          names.push(entry.name);
+        }
+      }
+      return names;
+    }
+
+    // The shape of the JSON files the repository already has. A formatter keeps a
+    // short array on one line and breaks a long one, so the files the repository
+    // already holds say which of the two it does.
+    function learnShape(root, skip) {
+      let collapse = true;
+      let width = 80;
+
+      for (const name of jsonFiles(root, skip)) {
+        let text;
+        try {
+          text = fs.readFileSync(path.join(root, name), "utf8");
+        } catch {
+          continue;
+        }
+        const lines = text.split("\n");
+
+        for (let index = 0; index < lines.length; index += 1) {
+          const line = lines[index];
+          const trimmed = line.trim();
+          const indent = line.length - line.trimStart().length;
+
+          if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+            if (trimmed === "[]") continue;
+            width = Math.max(width, line.length);
+            continue;
+          }
+
+          if (!trimmed.endsWith("[")) continue;
+
+          // An array the repository broke over several lines. When it holds only
+          // scalars and would fit on one line, the repository breaks what a
+          // formatter that keeps short arrays joins.
+          const inner = [];
+          let cursor = index + 1;
+          while (cursor < lines.length && !lines[cursor].trim().startsWith("]")) {
+            inner.push(lines[cursor].trim());
+            cursor += 1;
+          }
+          if (cursor >= lines.length) continue;
+          if (inner.some((item) => item.includes("{") || item.includes("["))) continue;
+          const items = inner.map((item) => item.replace(/,$/, ""));
+          const single = "[" + items.join(", ") + "]";
+          const prefix = trimmed.length - 1;
+          if (indent + prefix + single.length <= 80) collapse = false;
+        }
+      }
+
+      return { collapse, width };
+    }
+
+    function isScalar(value) {
+      return value === null || typeof value !== "object";
+    }
+
+    // Every object stays expanded, the way the template writes them, and an array
+    // of scalars goes on one line when it fits the width of the repository. The
+    // prefix is what stands on the line before the value.
+    function print(value, indent, shape, prefix) {
+      if (isScalar(value)) return JSON.stringify(value);
+      const pad = " ".repeat(indent + 2);
+
+      if (Array.isArray(value)) {
+        if (value.length === 0) return "[]";
+        const parts = value.map((item) => print(item, indent + 2, shape, 0));
+        if (shape.collapse && value.every(isScalar)) {
+          const single = "[" + parts.join(", ") + "]";
+          if (indent + prefix + single.length <= shape.width) return single;
+        }
+        return (
+          "[\n" +
+          parts.map((part) => pad + part).join(",\n") +
+          "\n" +
+          " ".repeat(indent) +
+          "]"
+        );
+      }
+
+      const entries = Object.entries(value);
+      if (entries.length === 0) return "{}";
+      return (
+        "{\n" +
+        entries
+          .map(
+            ([key, item]) =>
+              pad + JSON.stringify(key) + ": " + print(item, indent + 2, shape, key.length + 2),
+          )
+          .join(",\n") +
+        "\n" +
+        " ".repeat(indent) +
+        "}"
+      );
+    }
+
+    const config = JSON.parse(fs.readFileSync(configFile, "utf8"));
+    const shape = learnShape(root, path.basename(configFile));
+    fs.writeFileSync(configFile, print(config, 0, shape, 0) + "\n");
+  ' "$repo/harness.config.json" "$repo"; then
+    printf 'warn    this repository has no formatter, harness.config.json is written in the shape of the JSON files this repository already has, run your formatter over the installed files before the first commit\n'
+  else
+    printf 'warn    this repository has no formatter and the shape of harness.config.json could not be learned from it, run your formatter over the installed files before the first commit\n'
+  fi
+fi
+
 if [ "$dry_run" -eq 0 ] && [ "$install_deps" -eq 1 ]; then
   if has_command "$pm"; then
     if (cd "$repo" && timeout 600 $local_install_command >/dev/null 2>&1); then
@@ -445,6 +625,13 @@ for script in verify typecheck lint test:e2e; do
     missing_scripts="$missing_scripts $script"
   fi
 done
+
+format_step=""
+if [ -z "$formatter" ]; then
+  format_step="  8. Run the formatter of this repository over the installed files. The installer found
+     none, so the files keep the shape of the template.
+"
+fi
 
 cat <<CHECKLIST
 
@@ -469,4 +656,5 @@ next steps:
   6. Run $pm run harness, $pm run prove and $pm run prove-harness. All three must pass before the
      first commit.
   7. Keep the CI commands identical to the local ones, and let CI score the harness.
+$format_step
 CHECKLIST
