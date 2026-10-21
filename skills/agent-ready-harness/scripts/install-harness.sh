@@ -152,9 +152,9 @@ for candidate in test:e2e e2e test:integration test:browser; do
 done
 
 if [ -n "$e2e_script" ]; then
-  e2e_command="$pm $e2e_script"
+  e2e_command="$pm run $e2e_script"
 else
-  e2e_command="$pm test:e2e"
+  e2e_command="$pm run test:e2e"
 fi
 
 render() {
@@ -466,7 +466,7 @@ next steps:
      when one does not, and when the path does not enforce anything.
   4. Add the missing package scripts.$missing_scripts
   5. Add lefthook, prettier and eslint as dev dependencies if this repository does not have them.
-  6. Run $pm harness, $pm prove and $pm prove-harness. All three must pass before the first
-     commit.
+  6. Run $pm run harness, $pm run prove and $pm run prove-harness. All three must pass before the
+     first commit.
   7. Keep the CI commands identical to the local ones, and let CI score the harness.
 CHECKLIST

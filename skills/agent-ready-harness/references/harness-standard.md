@@ -16,7 +16,8 @@ and record the replacement in the `notes` array of `harness.config.json`. Never 
 
 A criterion that runs a package script runs it as `<pm> run <script>`, and not as
 `<pm> <script>`. npm treats some script names as builtins, so `npm test` runs npm's own runner and
-not the script the repository wrote. The config holds the same form.
+not the script the repository wrote. The config, the hook file, and the workflow all use the same
+form.
 
 ## The set
 

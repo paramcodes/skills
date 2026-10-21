@@ -55,9 +55,9 @@ several agents write in parallel. This skill is the files, the scorer, the proof
    `Enforced by: <kind>:<path>`. The kind is `config`, `file`, `command`, or `document`, and the
    path must exist, or the entry-point criterion fails. A path that exists but enforces nothing
    fails too.
-4. Run `<pm> harness`, `<pm> prove`, and `<pm> prove-harness`. All three must pass before the first
-   commit.
-5. Run `<pm> verify` and the project's own test suite.
+4. Run `<pm> run harness`, `<pm> run prove`, and `<pm> run prove-harness`. All three must pass
+   before the first commit.
+5. Run `<pm> run verify` and the project's own test suite.
 
 ### Polyglot repositories
 
@@ -128,9 +128,9 @@ the guardrail leaves a pending guardrail that the coordinator records, not a sil
 
 Before calling the harness done:
 
-1. `<pm> harness` exits zero and prints thirteen passing criteria.
-2. `<pm> prove` reports zero missed cases.
-3. `<pm> prove-harness` exits zero, so the harness fails when it is broken.
+1. `<pm> run harness` exits zero and prints thirteen passing criteria.
+2. `<pm> run prove` reports zero missed cases.
+3. `<pm> run prove-harness` exits zero, so the harness fails when it is broken.
 4. Break one criterion by hand, confirm the scorer fails, then restore it.
 5. Break one guardrail by hand, confirm the prover catches it, then restore it.
 6. Check that the `AGENTS.md` rules and the `harness.config.json` criteria agree. A rule with no

@@ -14,4 +14,4 @@ pre-commit:
       glob: "*.{ts,tsx}"
       run: "@@PM_EXEC@@ eslint --max-warnings=0 {staged_files}"
     typecheck:
-      run: "@@PM@@ typecheck"
+      run: "@@PM@@ run typecheck"
