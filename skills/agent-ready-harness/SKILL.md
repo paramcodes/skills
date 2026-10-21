@@ -44,7 +44,8 @@ several agents write in parallel. This skill is the files, the scorer, the proof
    The installer detects the package manager, copies the files that fit the stack, adds the `yaml`
    dependency the scorer parses workflows with, patches `package.json` with the `harness`, `prove`,
    and `prove-harness` scripts, adapts the criterion set to a second language toolchain when the
-   repository has one, and prints the adaptation checklist.
+   repository has one, formats every file it writes with the formatter the repository already has,
+   and prints the adaptation checklist.
    It never overwrites a file that already exists.
 2. Adapt `harness.config.json`. Set the layer paths, the data layer directory, the actor
    parameter pattern, and the allowlist file. Every criterion that does not apply to the stack
