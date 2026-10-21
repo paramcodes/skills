@@ -3,24 +3,55 @@
   "commands": {
     "exec": "{{PM_EXEC}}"
   },
-  "minimumCriteria": 10,
+  "minimumCriteria": 13,
+  "minimumProofs": 9,
+  "maxHarnessSeconds": 300,
   "agents": {
     "file": "AGENTS.md",
     "entryPoint": "CLAUDE.md",
-    "maxLines": 100
+    "maxLines": 100,
+    "rules": {
+      "eslint.arch.mjs": {
+        "kind": "config",
+        "contains": ["no-cross-layer-import"]
+      },
+      "eslint.config.mjs": {
+        "kind": "config",
+        "contains": ["noInlineConfig", "local/no-inline-config"]
+      },
+      "scripts/harness-score.mjs": { "kind": "file", "minLines": 100 },
+      "scripts/prove-guardrails.mjs": { "kind": "file", "minLines": 100 },
+      "docs/ratchet.md": {
+        "kind": "document",
+        "sections": [
+          "Fix at the strongest layer",
+          "Add a proof case",
+          "Add a log row"
+        ]
+      },
+      "lefthook.yml": { "kind": "config", "contains": ["pre-commit"] },
+      ".github/workflows/ci.yml": { "kind": "config", "contains": ["jobs"] },
+      "scripts/guard-branch.sh": { "kind": "file", "minLines": 3 }
+    }
   },
   "layers": {
     "data": {
       "alias": "@/db",
       "dir": "src/db"
     },
+    "order": ["pages", "components", "domain"],
     "restricted": [
-      { "name": "domain", "files": ["src/domain/**/*.ts"] },
+      {
+        "name": "pages",
+        "dir": "src/app",
+        "files": ["src/app/**/page.tsx"]
+      },
       {
         "name": "components",
+        "dir": "src/components",
         "files": ["src/components/**/*.ts", "src/components/**/*.tsx"]
       },
-      { "name": "pages", "files": ["src/app/**/page.tsx"] }
+      { "name": "domain", "dir": "src/domain", "files": ["src/domain/**/*.ts"] }
     ]
   },
   "dataAccess": {
@@ -32,7 +63,7 @@
     {
       "id": "boundaries",
       "why": "the layers that must not reach across a boundary cannot",
-      "check": { "type": "command", "run": "${PM} arch" }
+      "check": { "type": "command", "run": "${PM} run arch" }
     },
     {
       "id": "data-access",
@@ -42,67 +73,121 @@
     {
       "id": "proofs",
       "why": "every guardrail catches the mistake it was made for",
-      "check": { "type": "command", "run": "${PM} prove" }
+      "check": { "type": "exactSet", "set": "proofs", "run": "${PM} run prove" }
     },
     {
       "id": "escape-hatches",
-      "why": "inline lint config, ts-expect-error and skipped tests are errors in the source tree",
+      "why": "inline lint config, ts-expect-error, skipped tests and raw JSON parse are errors in the source tree",
       "check": {
-        "type": "fileContains",
-        "path": "eslint.config.mjs",
-        "contains": ["noInlineConfig", "ban-ts-comment", "no-skipped-tests"]
+        "type": "lintRules",
+        "run": "${PM_EXEC} eslint --max-warnings=0 ${PROBE}",
+        "rules": [
+          {
+            "name": "the source tree carries an inline lint config",
+            "rule": "local/no-inline-config",
+            "path": "src/__harness_lint_probe.ts",
+            "content": "export function harnessLintProbe(): void {\n  // eslint-disable-next-line no-console\n  console.log(\"this must not reach production\");\n}\n"
+          },
+          {
+            "name": "the source tree carries a ts-expect-error",
+            "rule": "@typescript-eslint/ban-ts-comment",
+            "path": "src/__harness_lint_probe.ts",
+            "content": "export function harnessLintProbe(value: { count: number }): number {\n  // @ts-expect-error the property does not exist\n  return value.missing;\n}\n"
+          },
+          {
+            "name": "the source tree carries a skipped test",
+            "rule": "local/no-skipped-tests",
+            "path": "src/__harness_lint_probe.test.ts",
+            "content": "import { describe, expect, it } from \"vitest\";\n\ndescribe(\"harness lint probe\", () => {\n  it.skip(\"never runs\", () => {\n    expect(true).toBe(true);\n  });\n});\n"
+          },
+          {
+            "name": "the source tree parses raw JSON",
+            "rule": "local/no-raw-json-parse",
+            "path": "src/__harness_lint_probe.ts",
+            "content": "export function harnessLintProbe(raw: string): unknown {\n  return JSON.parse(raw);\n}\n"
+          }
+        ]
       }
     },
     {
       "id": "entry-point",
-      "why": "every rule in AGENTS.md names an enforcement path, and that path exists",
-      "check": { "type": "agentsFile" }
+      "why": "every rule in AGENTS.md names the path that enforces it, and that path enforces something",
+      "check": { "type": "entryPointKinds" }
     },
     {
       "id": "local-gate",
       "why": "a broken change fails before it reaches the branch",
       "check": {
-        "type": "fileContains",
+        "type": "yamlSteps",
         "path": "lefthook.yml",
-        "contains": ["pre-commit:", "lint:", "typecheck:", "staged_files"]
+        "required": ["prettier --check", "eslint --max-warnings=0", "typecheck"]
       }
     },
     {
       "id": "ci",
       "why": "the merge gate runs the canonical commands and scores the harness",
       "check": {
-        "type": "fileContains",
+        "type": "yamlSteps",
         "path": ".github/workflows/ci.yml",
-        "contains": ["harness"]
+        "required": [
+          "verify",
+          "harness",
+          { "oneOf": ["prove", "prove-harness"] }
+        ]
       }
     },
     {
       "id": "ratchet",
       "why": "the procedure that turns a mistake into a permanent check is written down",
       "check": {
-        "type": "fileContains",
+        "type": "documentSections",
         "path": "docs/ratchet.md",
-        "contains": ["strongest layer", "proof case", "log row"]
+        "sections": [
+          "Fix at the strongest layer",
+          "Add a proof case",
+          "Add a log row"
+        ]
       }
     },
     {
       "id": "mistake-log",
-      "why": "mistakes are recorded in a shape a reader can scan",
+      "why": "mistakes are recorded in a shape a reader can scan, and every row names a guardrail that exists",
       "check": {
-        "type": "fileContains",
+        "type": "logRows",
         "path": "docs/mistake-log.md",
-        "contains": ["Mistake", "Guardrail"]
+        "minRows": 1
       }
     },
     {
       "id": "verify",
       "why": "the repository is green on the commands a contributor runs",
-      "check": { "type": "command", "run": "${PM} verify" }
+      "check": { "type": "command", "run": "${PM} run verify" }
+    },
+    {
+      "id": "behavioral",
+      "why": "the app is driven end to end, so a broken flow fails the gate",
+      "check": { "type": "behavioral", "run": "${PM} run test:e2e" }
+    },
+    {
+      "id": "artifact",
+      "why": "the built artifact holds what the source tree implies",
+      "check": {
+        "type": "artifactContains",
+        "artifact": "dist/index.js",
+        "build": "{{PM}} run build",
+        "contains": ["findUser"]
+      }
+    },
+    {
+      "id": "second-toolchain",
+      "why": "this repository holds one toolchain, so this slot holds the gate of that toolchain",
+      "check": { "type": "command", "run": "${PM} run typecheck" }
     }
   ],
   "proofs": [
     {
       "name": "a domain file imports the data layer",
+      "criterion": "boundaries",
       "write": [
         {
           "path": "src/domain/__harness_probe.ts",
@@ -112,11 +197,12 @@
       "expect": {
         "run": "${PM_EXEC} eslint --config eslint.arch.mjs ${PROBE} --max-warnings=0",
         "exit": "nonzero",
-        "contains": "no-restricted-imports"
+        "contains": "no-cross-layer-import"
       }
     },
     {
       "name": "a component imports the data layer",
+      "criterion": "boundaries",
       "write": [
         {
           "path": "src/components/__harness_probe.ts",
@@ -126,25 +212,56 @@
       "expect": {
         "run": "${PM_EXEC} eslint --config eslint.arch.mjs ${PROBE} --max-warnings=0",
         "exit": "nonzero",
-        "contains": "no-restricted-imports"
+        "contains": "no-cross-layer-import"
       }
     },
     {
       "name": "a page imports the data layer",
+      "criterion": "boundaries",
       "write": [
         {
           "path": "src/app/__harness_probe/page.tsx",
-          "content": "import { db } from \"${DATA_ALIAS}\";\n\nexport default function HarnessProbePage() {\n  return <span>{String(db)}</span>;\n}\n"
+          "content": "import { db } from \"${DATA_ALIAS}\";\n\nexport default function HarnessProbePage(): string {\n  return String(db);\n}\n"
         }
       ],
       "expect": {
         "run": "${PM_EXEC} eslint --config eslint.arch.mjs ${PROBE} --max-warnings=0",
         "exit": "nonzero",
-        "contains": "no-restricted-imports"
+        "contains": "no-cross-layer-import"
+      }
+    },
+    {
+      "name": "a domain file imports a component",
+      "criterion": "boundaries",
+      "write": [
+        {
+          "path": "src/domain/__harness_probe.ts",
+          "content": "import { Button } from \"../components/button\";\n\nexport const probe = Button;\n"
+        }
+      ],
+      "expect": {
+        "run": "${PM_EXEC} eslint --config eslint.arch.mjs ${PROBE} --max-warnings=0",
+        "exit": "nonzero",
+        "contains": "no-cross-layer-import"
+      }
+    },
+    {
+      "name": "a component imports the domain layer",
+      "criterion": "boundaries",
+      "write": [
+        {
+          "path": "src/components/__harness_probe.ts",
+          "content": "import { formatUser } from \"../domain/user\";\n\nexport const probe = formatUser;\n"
+        }
+      ],
+      "expect": {
+        "run": "${PM_EXEC} eslint --config eslint.arch.mjs ${PROBE} --max-warnings=0",
+        "exit": "zero"
       }
     },
     {
       "name": "the source tree carries an inline lint config",
+      "criterion": "escape-hatches",
       "write": [
         {
           "path": "src/__harness_probe.ts",
@@ -159,6 +276,7 @@
     },
     {
       "name": "the source tree carries a ts-expect-error",
+      "criterion": "escape-hatches",
       "write": [
         {
           "path": "src/__harness_probe.ts",
@@ -173,6 +291,7 @@
     },
     {
       "name": "the source tree carries a skipped test",
+      "criterion": "escape-hatches",
       "write": [
         {
           "path": "src/__harness_probe.test.ts",
@@ -187,6 +306,7 @@
     },
     {
       "name": "the source tree parses raw JSON",
+      "criterion": "escape-hatches",
       "write": [
         {
           "path": "src/__harness_probe.ts",
@@ -202,7 +322,18 @@
   ],
   "notes": [
     "Replace every criterion that does not apply to this stack with one that does, and never delete a criterion.",
-    "Raise minimumCriteria when a criterion is added. Never lower it to make the score pass.",
-    "Adapt the layer paths, the data layer directory, and the actor parameter pattern to this repository."
+    "Raise the criteria floor when a criterion is added. Never lower it to make the score pass.",
+    "Adapt the layer paths, the data layer directory, and the actor parameter pattern to this repository.",
+    "The layers of layers.order run from the outermost to the innermost. A layer may reach the layers below it and never the layers above it.",
+    "The escape hatches were replaced by the lintRules check, which runs the linter against a file that breaks each rule and holds the linter to it.",
+    "The local gate and the merge gate were replaced by the yamlSteps check, which reads the steps of the file and holds a step that only prints a command, is guarded off, or swallows its own failure.",
+    "The ratchet document was replaced by the documentSections check, which reads the headings of the document and holds the procedure it names.",
+    "The mistake log was replaced by the logRows check, which reads the table of the log and holds a row that names no guardrail that exists.",
+    "The entry point was replaced by the entryPointKinds check, which reads the kind of every rule and holds the kind. A path that exists is not enforcement, so the kind decides how the path is checked.",
+    "The proofs criterion was replaced by the exactSet check, which holds the cases to the exact set the prover holds, and runs the prover.",
+    "The behavioural criterion drives the app end to end. Replace the command with the end to end command of this repository.",
+    "The artifact criterion holds the build output to the sources. Replace the artifact path, the build command and the strings with the ones of this repository.",
+    "This repository holds one toolchain, so the second toolchain slot holds the typecheck gate. A repository with a second language toolchain replaces this slot with that toolchain's gate, for example cargo test, and records the replacement here.",
+    "When a case is added to the proofs array, add its name to the list the prover holds and to the list the scorer holds, and raise the proof floor in the same change. The two files must hold the same names."
   ]
 }

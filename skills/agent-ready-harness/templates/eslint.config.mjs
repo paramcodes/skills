@@ -1,7 +1,15 @@
 import { defineConfig, globalIgnores } from "eslint/config";
 import tseslint from "typescript-eslint";
 import arch from "./eslint.arch.mjs";
-import { rules as localRules } from "./eslint-rules/index.mjs";
+
+/**
+ * The lint configuration.
+ *
+ * `eslint.arch.mjs` holds the boundary rule and registers the local plugin,
+ * so this file and the arch command run the same rule on the same layers.
+ * A plugin may not be registered twice in one configuration, so the local
+ * rules are used through the plugin the arch configuration registers.
+ */
 
 export default defineConfig([
   globalIgnores([
@@ -37,12 +45,6 @@ export default defineConfig([
         "error",
         { argsIgnorePattern: "^_", varsIgnorePattern: "^_" },
       ],
-    },
-  },
-  {
-    files: ["**/*.{ts,tsx,mts,cts}"],
-    plugins: {
-      local: { rules: localRules },
     },
   },
   {
