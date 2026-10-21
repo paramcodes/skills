@@ -18,6 +18,11 @@ adds the `yaml` dependency that the scorer parses workflows with, patches `packa
 `harness`, `prove`, and `prove-harness` scripts, adapts the criterion set to a second language
 toolchain, and prints the adaptation checklist. It refuses to overwrite an existing file.
 
+Every file the installer writes is formatted with the formatter the repository already has, so the
+installed files pass the format check of the repository they land in. A repository with no
+formatter gets a loud warning and a checklist step, because the installer cannot know the shape
+its formatter wants.
+
 Run the installed scripts as `<pm> run <script>`, and not as `<pm> <script>`. npm treats some
 script names as builtins, so `npm test` runs npm's own runner and not the script the repository
 wrote.
