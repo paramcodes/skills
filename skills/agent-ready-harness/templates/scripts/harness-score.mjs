@@ -110,6 +110,9 @@ const EXPECTED_PROOF_NAMES = [
   "the source tree carries a ts-expect-error",
   "the source tree carries a skipped test",
   "the source tree parses raw JSON",
+  "the mistake log criterion fails when a row names no guardrail",
+  "the mistake log criterion fails when a row names a guardrail that does not exist",
+  "the entry point criterion fails when a rule names no kind",
 ];
 
 function expand(text, probe) {
@@ -608,15 +611,24 @@ const checks = {
   },
 
   /**
-   * Reads the rows of a log table. The table must hold at least one row, and
-   * every row must name a guardrail that exists on disk. A log with no rows
-   * records nothing.
+   * Reads the rows of a log table. The table must hold its schema, and every
+   * row it holds must name a guardrail that exists on disk.
+   *
+   * A log with no rows passes. A fresh repository has made no mistakes, and a
+   * gate that demands a row forces a repository to invent one. The check
+   * holds the shape of the rows that exist, and it says out loud that the log
+   * is empty.
    */
   logRows(check) {
     if (!existsSync(check.path))
       return { ok: false, reason: `${check.path} is missing` };
 
-    const content = readFileSync(check.path, "utf8");
+    // An example row inside an HTML comment shows the shape without being a
+    // row, so the comment is removed before the table is read.
+    const content = readFileSync(check.path, "utf8").replace(
+      /<!--[\s\S]*?-->/g,
+      "",
+    );
     const table = content
       .split("\n")
       .filter((line) => line.trim().startsWith("|"))
@@ -628,7 +640,7 @@ const checks = {
 
     const header = table[0];
     const rows = table.slice(2);
-    const minimum = check.minRows ?? 1;
+    const minimum = check.minRows ?? 0;
     const problems = [];
 
     const guardrailColumn = findGuardrailColumn(header, check.guardrailColumn);
@@ -647,6 +659,13 @@ const checks = {
     }
 
     for (const [index, row] of filled.entries()) {
+      if (row.length < header.length) {
+        problems.push(
+          `row ${index + 1} of ${check.path} holds ${row.length} cells, the table holds ${header.length}`,
+        );
+        continue;
+      }
+
       const cell = row[guardrailColumn] ?? "";
       if (cell === "") {
         problems.push(`row ${index + 1} of ${check.path} names no guardrail`);
@@ -679,6 +698,14 @@ const checks = {
         detail: problems.join("\n"),
       };
     }
+
+    if (filled.length === 0) {
+      return {
+        ok: true,
+        note: "the repository has recorded no mistakes yet",
+      };
+    }
+
     return { ok: true };
   },
 
@@ -721,7 +748,9 @@ const checks = {
     for (const rule of rules) {
       const match = rule.match(/Enforced by:\s*(\S+)\s*$/);
       if (!match) {
-        problems.push(`a rule names no enforcement path: ${rule}`);
+        problems.push(
+          `the rule "${rule}" names no enforcement path. The form is "${ENFORCEMENT_FORM}", where the kind is one of ${KINDS.join(", ")}.`,
+        );
         continue;
       }
 
@@ -731,21 +760,32 @@ const checks = {
       const target = separator === -1 ? token : token.slice(separator + 1);
       const entry = registry[target] ?? {};
 
-      const resolvedKind = kind || entry.kind || "";
-      if (!resolvedKind) {
+      if (!kind) {
         problems.push(
-          `the rule "${rule}" names no kind, write "Enforced by: <kind>: <path>" with a kind of ${KINDS.join(", ")}`,
+          `the rule "${rule}" names no kind. The form is "${ENFORCEMENT_FORM}", where the kind is one of ${KINDS.join(", ")}.`,
         );
         continue;
       }
-      if (!KINDS.includes(resolvedKind)) {
+      if (!target) {
         problems.push(
-          `the rule "${rule}" names the unknown kind ${resolvedKind}, the kinds are ${KINDS.join(", ")}`,
+          `the rule "${rule}" names no path. The form is "${ENFORCEMENT_FORM}", where the kind is one of ${KINDS.join(", ")}.`,
+        );
+        continue;
+      }
+      if (!KINDS.includes(kind)) {
+        problems.push(
+          `the rule "${rule}" names the unknown kind ${kind}, the kinds are ${KINDS.join(", ")}`,
+        );
+        continue;
+      }
+      if (entry.kind && entry.kind !== kind) {
+        problems.push(
+          `the rule "${rule}" names the kind ${kind}, the registry names ${entry.kind} for ${target}`,
         );
         continue;
       }
 
-      const reason = validateKind(resolvedKind, target, entry);
+      const reason = validateKind(kind, target, entry);
       if (reason) problems.push(`the rule "${rule}": ${reason}`);
     }
 
@@ -873,61 +913,13 @@ const checks = {
     return { ok: true };
   },
 
+  /**
+   * The old name of the entry point check. It reads the same rules with the
+   * same parser and the same message, so a repository that still names the
+   * check `agentsFile` gets the same gate.
+   */
   agentsFile(check) {
-    const settings = { ...(config.agents ?? {}), ...check };
-    const file = settings.file ?? "AGENTS.md";
-    if (!existsSync(file)) return { ok: false, reason: `${file} is missing` };
-
-    const content = readFileSync(file, "utf8");
-    const lines = content.trimEnd().split("\n").length;
-    if (settings.maxLines && lines > settings.maxLines) {
-      return {
-        ok: false,
-        reason: `${file} has ${lines} lines, the limit is ${settings.maxLines}`,
-      };
-    }
-
-    const rules = content
-      .split("\n")
-      .filter((line) => line.startsWith("- "))
-      .map((line) => line.slice(2).trim());
-
-    if (rules.length === 0)
-      return { ok: false, reason: `${file} names no rules` };
-
-    const problems = [];
-    for (const rule of rules) {
-      const match = rule.match(/Enforced by: (\S+)$/);
-      if (!match) {
-        problems.push(`a rule names no enforcement path: ${rule}`);
-        continue;
-      }
-      if (!existsSync(path.join(root, match[1]))) {
-        problems.push(`${match[1]} does not exist`);
-      }
-    }
-    if (problems.length > 0) {
-      return {
-        ok: false,
-        reason: `${file} has ${problems.length} broken rules`,
-        detail: problems.join("\n"),
-      };
-    }
-
-    if (settings.entryPoint) {
-      if (!existsSync(settings.entryPoint)) {
-        return { ok: false, reason: `${settings.entryPoint} is missing` };
-      }
-      const pointer = readFileSync(settings.entryPoint, "utf8").trim();
-      if (pointer !== `@${file}`) {
-        return {
-          ok: false,
-          reason: `${settings.entryPoint} must contain only @${file}, it contains: ${pointer}`,
-        };
-      }
-    }
-
-    return { ok: true };
+    return checks.entryPointKinds(check);
   },
 
   actorParams(check) {
@@ -982,6 +974,12 @@ const checks = {
 };
 
 const KINDS = ["config", "file", "command", "document"];
+
+/**
+ * The form a rule of the entry point file uses to name its enforcement. The
+ * kind and the path are one token, so there is no space after the colon.
+ */
+const ENFORCEMENT_FORM = "Enforced by: <kind>:<path>";
 
 /**
  * The sets the harness holds. A set lives in this file, so the config alone
@@ -1218,6 +1216,7 @@ for (const criterion of selected) {
 
   if (result.ok) {
     console.log(`PASS  ${label}  ${criterion.why ?? ""}`.trimEnd());
+    if (result.note) console.log(`      note: ${result.note}`);
     passed += 1;
     continue;
   }

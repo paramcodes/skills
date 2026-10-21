@@ -4,7 +4,7 @@
     "exec": "{{PM_EXEC}}"
   },
   "minimumCriteria": 13,
-  "minimumProofs": 9,
+  "minimumProofs": 12,
   "maxHarnessSeconds": 300,
   "agents": {
     "file": "AGENTS.md",
@@ -19,8 +19,14 @@
         "kind": "config",
         "contains": ["noInlineConfig", "local/no-inline-config"]
       },
-      "scripts/harness-score.mjs": { "kind": "file", "minLines": 100 },
-      "scripts/prove-guardrails.mjs": { "kind": "file", "minLines": 100 },
+      "scripts/harness-score.mjs": {
+        "kind": "file",
+        "minLines": 100
+      },
+      "scripts/prove-guardrails.mjs": {
+        "kind": "file",
+        "minLines": 100
+      },
       "docs/ratchet.md": {
         "kind": "document",
         "sections": [
@@ -29,9 +35,29 @@
           "Add a log row"
         ]
       },
-      "lefthook.yml": { "kind": "config", "contains": ["pre-commit"] },
-      ".github/workflows/ci.yml": { "kind": "config", "contains": ["jobs"] },
-      "scripts/guard-branch.sh": { "kind": "file", "minLines": 3 }
+      "lefthook.yml": {
+        "kind": "config",
+        "contains": ["pre-commit"]
+      },
+      ".github/workflows/ci.yml": {
+        "kind": "config",
+        "contains": ["jobs"]
+      },
+      "scripts/guard-branch.sh": {
+        "kind": "file",
+        "minLines": 3
+      },
+      "scripts/prove-harness.mjs": {
+        "kind": "file",
+        "minLines": 30
+      },
+      "docs/mistake-log.md": {
+        "kind": "document"
+      },
+      "package.json": {
+        "kind": "config",
+        "contains": ["scripts"]
+      }
     }
   },
   "layers": {
@@ -51,7 +77,11 @@
         "dir": "src/components",
         "files": ["src/components/**/*.ts", "src/components/**/*.tsx"]
       },
-      { "name": "domain", "dir": "src/domain", "files": ["src/domain/**/*.ts"] }
+      {
+        "name": "domain",
+        "dir": "src/domain",
+        "files": ["src/domain/**/*.ts"]
+      }
     ]
   },
   "dataAccess": {
@@ -63,17 +93,26 @@
     {
       "id": "boundaries",
       "why": "the layers that must not reach across a boundary cannot",
-      "check": { "type": "command", "run": "${PM} run arch" }
+      "check": {
+        "type": "command",
+        "run": "${PM} run arch"
+      }
     },
     {
       "id": "data-access",
       "why": "every function that touches a user's rows takes the actor whose rows it touches",
-      "check": { "type": "actorParams" }
+      "check": {
+        "type": "actorParams"
+      }
     },
     {
       "id": "proofs",
       "why": "every guardrail catches the mistake it was made for",
-      "check": { "type": "exactSet", "set": "proofs", "run": "${PM} run prove" }
+      "check": {
+        "type": "exactSet",
+        "set": "proofs",
+        "run": "${PM} run prove"
+      }
     },
     {
       "id": "escape-hatches",
@@ -112,7 +151,9 @@
     {
       "id": "entry-point",
       "why": "every rule in AGENTS.md names the path that enforces it, and that path enforces something",
-      "check": { "type": "entryPointKinds" }
+      "check": {
+        "type": "entryPointKinds"
+      }
     },
     {
       "id": "local-gate",
@@ -132,7 +173,9 @@
         "required": [
           "verify",
           "harness",
-          { "oneOf": ["prove", "prove-harness"] }
+          {
+            "oneOf": ["prove", "prove-harness"]
+          }
         ]
       }
     },
@@ -155,18 +198,24 @@
       "check": {
         "type": "logRows",
         "path": "docs/mistake-log.md",
-        "minRows": 1
+        "minRows": 0
       }
     },
     {
       "id": "verify",
       "why": "the repository is green on the commands a contributor runs",
-      "check": { "type": "command", "run": "${PM} run verify" }
+      "check": {
+        "type": "command",
+        "run": "${PM} run verify"
+      }
     },
     {
       "id": "behavioral",
       "why": "the app is driven end to end, so a broken flow fails the gate",
-      "check": { "type": "behavioral", "run": "${PM} run test:e2e" }
+      "check": {
+        "type": "behavioral",
+        "run": "${PM} run test:e2e"
+      }
     },
     {
       "id": "artifact",
@@ -181,7 +230,10 @@
     {
       "id": "second-toolchain",
       "why": "this repository holds one toolchain, so this slot holds the gate of that toolchain",
-      "check": { "type": "command", "run": "${PM} run typecheck" }
+      "check": {
+        "type": "command",
+        "run": "${PM} run typecheck"
+      }
     }
   ],
   "proofs": [
@@ -318,6 +370,51 @@
         "exit": "nonzero",
         "contains": "no-raw-json-parse"
       }
+    },
+    {
+      "name": "the mistake log criterion fails when a row names no guardrail",
+      "criterion": "mistake-log",
+      "write": [
+        {
+          "path": "docs/mistake-log.md",
+          "content": "# Mistake log\n\n| Date | Mistake | How it slipped through | Fix | Guardrail now | Proof case |\n| ---- | ------- | ---------------------- | --- | ------------- | ---------- |\n| 2026-10-21 | A mistake | It slipped | It was fixed |  | a case |\n"
+        }
+      ],
+      "expect": {
+        "run": "${PM} run harness -- --only mistake-log",
+        "exit": "nonzero",
+        "contains": "names no guardrail"
+      }
+    },
+    {
+      "name": "the mistake log criterion fails when a row names a guardrail that does not exist",
+      "criterion": "mistake-log",
+      "write": [
+        {
+          "path": "docs/mistake-log.md",
+          "content": "# Mistake log\n\n| Date | Mistake | How it slipped through | Fix | Guardrail now | Proof case |\n| ---- | ------- | ---------------------- | --- | ------------- | ---------- |\n| 2026-10-21 | A mistake | It slipped | It was fixed | scripts/does-not-exist.mjs | a case |\n"
+        }
+      ],
+      "expect": {
+        "run": "${PM} run harness -- --only mistake-log",
+        "exit": "nonzero",
+        "contains": "none of which exists"
+      }
+    },
+    {
+      "name": "the entry point criterion fails when a rule names no kind",
+      "criterion": "entry-point",
+      "write": [
+        {
+          "path": "AGENTS.md",
+          "content": "# Project\n\n## Rules\n\n- The rule names a path but no kind. Enforced by: eslint.config.mjs\n"
+        }
+      ],
+      "expect": {
+        "run": "${PM} run harness -- --only entry-point",
+        "exit": "nonzero",
+        "contains": "Enforced by: <kind>:<path>"
+      }
     }
   ],
   "notes": [
@@ -334,6 +431,8 @@
     "The behavioural criterion drives the app end to end. Replace the command with the end to end command of this repository.",
     "The artifact criterion holds the build output to the sources. Replace the artifact path, the build command and the strings with the ones of this repository.",
     "This repository holds one toolchain, so the second toolchain slot holds the typecheck gate. A repository with a second language toolchain replaces this slot with that toolchain's gate, for example cargo test, and records the replacement here.",
-    "When a case is added to the proofs array, add its name to the list the prover holds and to the list the scorer holds, and raise the proof floor in the same change. The two files must hold the same names."
+    "When a case is added to the proofs array, add its name to the list the prover holds and to the list the scorer holds, and raise the proof floor in the same change. The two files must hold the same names.",
+    "The mistake log holds the mistakes of this repository. A fresh repository has made none, so the log criterion passes a log with no rows and says so. Every row that exists must name a guardrail path that exists.",
+    "Every rule of AGENTS.md names its enforcement as `Enforced by: <kind>:<path>`, where the kind is config, file, command or document. There is no space after the colon, because the kind and the path are one token."
   ]
 }
