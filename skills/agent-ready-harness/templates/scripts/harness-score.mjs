@@ -124,6 +124,7 @@ const EXPECTED_PROOF_NAMES = [
   "the source tree carries a ts-expect-error",
   "the source tree carries a skipped test",
   "the source tree parses raw JSON",
+  "the arch lint ignores the built output",
   "the mistake log criterion fails when a row names no guardrail",
   "the mistake log criterion fails when a row names a guardrail that does not exist",
   "the entry point criterion fails when a rule names no kind",

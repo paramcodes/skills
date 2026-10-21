@@ -65,6 +65,7 @@ for (const file of [configPath, scorerPath, proverPath]) {
 const mutations = [
   {
     name: "a command criterion runs a no-op",
+    criterion: "boundaries",
     expect: "exits 0 without checking anything",
     apply(config) {
       const criterion = config.criteria.find(
@@ -77,6 +78,7 @@ const mutations = [
   },
   {
     name: "a criterion is deleted and another is duplicated",
+    criterion: "boundaries",
     expect: "appear more than once",
     apply(config) {
       const deleted = config.criteria.pop();
@@ -87,6 +89,7 @@ const mutations = [
   },
   {
     name: "the proof set is emptied",
+    criterion: "proofs",
     expect: "proofs set",
     apply(config) {
       config.proofs = [];
@@ -95,6 +98,7 @@ const mutations = [
   },
   {
     name: "a proof case is renamed",
+    criterion: "proofs",
     expect: "not one the harness holds",
     apply(config) {
       const proof = config.proofs[0];
@@ -104,6 +108,7 @@ const mutations = [
   },
   {
     name: "the criteria floor is lowered",
+    criterion: "boundaries",
     expect: "minimumCriteria is",
     apply(config) {
       const before = config.minimumCriteria;
@@ -113,6 +118,7 @@ const mutations = [
   },
   {
     name: "the proof floor is lowered",
+    criterion: "proofs",
     expect: "minimumProofs is",
     apply(config) {
       const before = config.minimumProofs;
@@ -122,6 +128,7 @@ const mutations = [
   },
   {
     name: "a criterion holds an unknown check type",
+    criterion: "boundaries",
     expect: "unknown check type",
     apply(config) {
       const criterion = config.criteria[0];
@@ -160,11 +167,12 @@ function copyHarness() {
   return tree;
 }
 
-function score(tree) {
+function score(tree, only) {
   const config = path.join(tree, "harness.config.json");
+  const scope = only ? ` --only ${only}` : "";
   try {
     const stdout = execSync(
-      `node ${path.join(tree, "scripts", "harness-score.mjs")} ${root}`,
+      `node ${path.join(tree, "scripts", "harness-score.mjs")} ${root}${scope}`,
       {
         encoding: "utf8",
         stdio: ["ignore", "pipe", "pipe"],
@@ -217,7 +225,7 @@ for (const mutation of mutations) {
   }
   writeFileSync(configFile, `${JSON.stringify(config, null, 2)}\n`);
 
-  const result = score(tree);
+  const result = score(tree, mutation.criterion);
   rmSync(tree, { recursive: true, force: true });
 
   if (result.code === 0) {

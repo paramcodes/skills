@@ -4,7 +4,7 @@
     "exec": "{{PM_EXEC}}"
   },
   "minimumCriteria": 13,
-  "minimumProofs": 18,
+  "minimumProofs": 19,
   "maxHarnessSeconds": 300,
   "agents": {
     "file": "AGENTS.md",
@@ -372,6 +372,20 @@
       }
     },
     {
+      "name": "the arch lint ignores the built output",
+      "criterion": "boundaries",
+      "write": [
+        {
+          "path": "dist/__harness_probe.js",
+          "content": "const = ;\n"
+        }
+      ],
+      "expect": {
+        "run": "${PM} run arch",
+        "exit": "zero"
+      }
+    },
+    {
       "name": "the mistake log criterion fails when a row names no guardrail",
       "criterion": "mistake-log",
       "write": [
@@ -524,6 +538,7 @@
     "When a case is added to the proofs array, add its name to the list the prover holds and to the list the scorer holds, and raise the proof floor in the same change. The two files must hold the same names.",
     "The mistake log holds the mistakes of this repository. A fresh repository has made none, so the log criterion passes a log with no rows and says so. Every row that exists must name a guardrail path that exists.",
     "Every rule of AGENTS.md names its enforcement as `Enforced by: <kind>:<path>`, where the kind is config, file, command or document. There is no space after the colon, because the kind and the path are one token.",
-    "The scorer writes a probe file to run the linter, and it leaves the tree exactly as it found it, on every exit path. A run that was killed outright leaves a journal outside the tree, and the next run restores the tree from that journal before it writes anything of its own."
+    "The scorer writes a probe file to run the linter, and it leaves the tree exactly as it found it, on every exit path. A run that was killed outright leaves a journal outside the tree, and the next run restores the tree from that journal before it writes anything of its own.",
+    "The lint ignore lists cover dist, because the default config builds into dist. A lint that scans the built output lints the compiler's output and fails on it."
   ]
 }
