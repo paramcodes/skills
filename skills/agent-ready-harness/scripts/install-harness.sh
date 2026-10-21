@@ -111,6 +111,7 @@ case "$pm" in
           cache: pnpm"
     install_command="pnpm install --frozen-lockfile"
     local_install_command="pnpm install"
+    lockfiles="pnpm-lock.yaml"
     ;;
   npm)
     setup_steps="      - uses: actions/setup-node@v4
@@ -119,6 +120,7 @@ case "$pm" in
           cache: npm"
     install_command="npm ci"
     local_install_command="npm install"
+    lockfiles="package-lock.json"
     ;;
   yarn)
     setup_steps="      - uses: actions/setup-node@v4
@@ -128,6 +130,7 @@ case "$pm" in
       - run: corepack enable"
     install_command="yarn install --immutable"
     local_install_command="yarn install"
+    lockfiles="yarn.lock"
     ;;
   bun)
     setup_steps="      - uses: oven-sh/setup-bun@v2
@@ -136,8 +139,25 @@ case "$pm" in
           node-version: 22"
     install_command="bun install --frozen-lockfile"
     local_install_command="bun install"
+    lockfiles="bun.lockb bun.lock"
     ;;
 esac
+
+# The frozen install needs the lockfile of the package manager. A repository
+# without one installs without it, because a frozen install without a lockfile
+# fails the first CI run.
+has_lockfile=0
+for candidate in $lockfiles; do
+  if [ -f "$repo/$candidate" ]; then
+    has_lockfile=1
+  fi
+done
+if [ "$has_lockfile" -eq 0 ]; then
+  install_command="$local_install_command"
+  lockfile_note="This repository has no $lockfiles, so the workflow installs without the frozen lockfile."
+else
+  lockfile_note=""
+fi
 
 # The second language toolchain. A repository with two languages holds both of
 # them to a gate, and the gate needs its toolchain on the machine that runs it.
@@ -668,8 +688,15 @@ done
 
 format_step=""
 if [ -z "$formatter" ]; then
-  format_step="  8. Run the formatter of this repository over the installed files. The installer found
+  format_step="  9. Run the formatter of this repository over the installed files. The installer found
      none, so the files keep the shape of the template.
+"
+fi
+
+lockfile_step=""
+if [ -n "$lockfile_note" ]; then
+  lockfile_step="  8. Commit the lockfile the installer wrote. The CI installs with it, and the
+     manifest and the lockfile have to agree.
 "
 fi
 
@@ -696,5 +723,5 @@ next steps:
   6. Run $pm run harness, $pm run prove and $pm run prove-harness. All three must pass before the
      first commit.
   7. Keep the CI commands identical to the local ones, and let CI score the harness.
-$format_step
+$lockfile_step$format_step
 CHECKLIST
