@@ -52,7 +52,7 @@ several agents write in parallel. This skill is the files, the scorer, the proof
    the scorer holds the expected ids in its own code. Record each replacement in the `notes`
    array.
 3. Write the rules in `AGENTS.md`. One bullet per rule, and each bullet ends with
-   `Enforced by: <path> (<kind>)`. The kind is `config`, `file`, `command`, or `document`, and the
+   `Enforced by: <kind>:<path>`. The kind is `config`, `file`, `command`, or `document`, and the
    path must exist, or the entry-point criterion fails. A path that exists but enforces nothing
    fails too.
 4. Run `<pm> harness`, `<pm> prove`, and `<pm> prove-harness`. All three must pass before the first
@@ -141,10 +141,10 @@ Before calling the harness done:
 > Install the agent harness in this repository using the `agent-ready-harness` skill. Run the
 > installer first. Then adapt `harness.config.json` to this stack, keeping all thirteen criteria
 > and replacing any that do not apply with ones that do, without changing their ids. Write the
-> `AGENTS.md` rules so every bullet ends with `Enforced by:` and a path that exists and a kind
-> that names how it is enforced. Run the harness, the proofs, and the self proof, and show that a
-> deliberately broken guardrail fails before you restore it. Report the criteria that passed, the
-> proofs that caught their violation, and anything that could not run.
+> `AGENTS.md` rules so every bullet ends with `Enforced by: <kind>:<path>`, with a path that
+> exists and a kind that names how it is enforced. Run the harness, the proofs, and the self
+> proof, and show that a deliberately broken guardrail fails before you restore it. Report the
+> criteria that passed, the proofs that caught their violation, and anything that could not run.
 
 ## Related skills
 

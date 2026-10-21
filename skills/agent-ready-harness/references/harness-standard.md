@@ -99,9 +99,9 @@ the document's sections. Path existence alone is never enough, so a rule that po
 architecture documents fails.
 
 **Adapt:** the limit is the `maxLines` value in the config. Every rule ends with
-`Enforced by: <path> (<kind>)`, where the kind is one of the four above. A rule enforced by a
-script that refuses the default branch is a `file` kind, because the script cannot exit zero on
-the default branch.
+`Enforced by: <kind>:<path>`, where the kind is one of the four above and the path is the file
+that enforces the rule. A rule enforced by a script that refuses the default branch is a `file`
+kind, because the script cannot exit zero on the default branch.
 
 The default entry point states these kinds:
 
