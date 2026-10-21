@@ -4,15 +4,15 @@ One paragraph on what this project is and who uses it. Replace this line before 
 
 ## Commands
 
-| Command                | What it does                                              |
-| ---------------------- | --------------------------------------------------------- |
-| `@@PM@@ dev`           | Run the app locally                                       |
-| `@@PM@@ verify`        | Format check, lint, typecheck, unit tests, build          |
-| `@@PM@@ verify:full`   | `verify` plus the integration tests                       |
-| `@@PM@@ test:e2e`      | Drive the app the way a user does                         |
-| `@@PM@@ harness`       | Score the harness criteria                                |
-| `@@PM@@ prove`         | Prove every guardrail catches the mistake it was made for |
-| `@@PM@@ prove-harness` | Prove the harness fails when it is broken                 |
+| Command                   | What it does                                              |
+| ------------------------- | --------------------------------------------------------- |
+| `@@PM@@ run dev`          | Run the app locally                                       |
+| `@@PM@@ run verify`       | Format check, lint, typecheck, unit tests, build          |
+| `@@PM@@ run verify:full`  | `verify` plus the integration tests                       |
+| `@@PM@@ run test:e2e`     | Drive the app the way a user does                         |
+| `@@PM@@ run harness`      | Score the harness criteria                                |
+| `@@PM@@ run prove`        | Prove every guardrail catches the mistake it was made for |
+| `@@PM@@ run prove-harness`| Prove the harness fails when it is broken                 |
 
 ## Rules
 

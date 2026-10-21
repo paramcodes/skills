@@ -14,6 +14,11 @@ criterion that does not get run.
 Adapt a criterion when the stack makes it meaningless. Replace it with one that holds, keep the id,
 and record the replacement in the `notes` array of `harness.config.json`. Never delete one.
 
+A criterion that runs a package script runs it as `<pm> run <script>`, and not as
+`<pm> <script>`. npm treats some script names as builtins, so `npm test` runs npm's own runner and
+not the script the repository wrote. The config, the hook file, and the workflow all use the same
+form.
+
 ## The set
 
 | Id                | Check             | What it proves                                                                             |
@@ -160,10 +165,14 @@ row`.
 **Proves:** mistakes are recorded in a shape a reader can scan, and every row names the guardrail
 that now catches it and the proof case that covers it.
 
-**Check:** the `logRows` check parses the table, requires at least one row, and requires each row
-to name a guardrail path that exists on disk. A log with a header and no row fails. The columns
-are the date, the mistake, the check that was missing, the fix, the guardrail, and the proof case
-that covers it.
+**Check:** the `logRows` check parses the table and holds every row that exists to the schema. It
+checks the shape of the rows, not the number of them. A log with no row passes, because a fresh
+install has made no mistake yet, and the criterion says so in its output. A row that names no
+guardrail path, or a guardrail path that does not exist on disk, fails. The columns are the date,
+the mistake, the check that was missing, the fix, the guardrail, and the proof case that covers it.
+
+The log holds the mistakes of the installed repository. A fresh install starts with no rows, and a
+template that ships a filled row makes every new project open with a history that is not its own.
 
 **Adapt:** copy the schema. The row count grows as the repo makes mistakes, and a row without a
 guardrail behind it is a hope rather than a rule.

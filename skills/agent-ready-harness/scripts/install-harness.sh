@@ -152,9 +152,9 @@ for candidate in test:e2e e2e test:integration test:browser; do
 done
 
 if [ -n "$e2e_script" ]; then
-  e2e_command="$pm $e2e_script"
+  e2e_command="$pm run $e2e_script"
 else
-  e2e_command="$pm test:e2e"
+  e2e_command="$pm run test:e2e"
 fi
 
 render() {
@@ -350,7 +350,8 @@ if [ -n "$toolchain" ]; then
     toolchain_why="the $toolchain toolchain is gated too"
     toolchain_note="Replaced the second-toolchain criterion with the $toolchain gate ($toolchain_gate_command) because this repository has a second language toolchain."
   else
-    toolchain_note="This repository has a second language toolchain ($toolchain) and no gate command for it, so the second-toolchain criterion needs a check by hand."
+    toolchain_why="the $toolchain toolchain is not gated yet, on purpose, until a gate command for it is installed"
+    toolchain_note="This repository has a second language toolchain ($toolchain) and no gate command for it, so the second-toolchain criterion keeps the gate of this repository on purpose and the $toolchain toolchain stays ungated until a gate command for it is installed."
   fi
 else
   toolchain_gate_command=""
@@ -397,15 +398,31 @@ if [ "$dry_run" -eq 0 ]; then
         *) printf 'warn    no criterion matches the second-toolchain slot, adapt it by hand\n' ;;
       esac
     else
-      node -e '
+      adapt_result="$(node -e '
         const fs = require("fs");
         const file = process.argv[1];
-        const note = process.argv[2];
+        const idPattern = new RegExp(process.argv[2], "i");
+        const why = process.argv[3];
+        const note = process.argv[4];
         const config = JSON.parse(fs.readFileSync(file, "utf8"));
+        const criteria = Array.isArray(config.criteria) ? config.criteria : [];
+        const index = criteria.findIndex((criterion) => idPattern.test(criterion.id ?? ""));
+        if (index !== -1) {
+          criteria[index] = { ...criteria[index], why };
+          config.criteria = criteria;
+        }
         config.notes = [...(config.notes ?? []), note];
         fs.writeFileSync(file, `${JSON.stringify(config, null, 2)}\n`);
-      ' "$repo/harness.config.json" "$toolchain_note"
-      printf 'adapt   the notes array records the second toolchain\n'
+        process.stdout.write(index === -1 ? "no-match" : "recorded");
+      ' "$repo/harness.config.json" "toolchain|polyglot" "$toolchain_why" "$toolchain_note")"
+      case "$adapt_result" in
+        recorded)
+          printf 'warn    the %s toolchain has no gate command, the second-toolchain criterion keeps the gate of this repository on purpose\n' "$toolchain"
+          ;;
+        *)
+          printf 'warn    the %s toolchain has no gate command and no criterion matches the second-toolchain slot, adapt it by hand\n' "$toolchain"
+          ;;
+      esac
     fi
   fi
 fi
@@ -449,7 +466,7 @@ next steps:
      when one does not, and when the path does not enforce anything.
   4. Add the missing package scripts.$missing_scripts
   5. Add lefthook, prettier and eslint as dev dependencies if this repository does not have them.
-  6. Run $pm harness, $pm prove and $pm prove-harness. All three must pass before the first
-     commit.
+  6. Run $pm run harness, $pm run prove and $pm run prove-harness. All three must pass before the
+     first commit.
   7. Keep the CI commands identical to the local ones, and let CI score the harness.
 CHECKLIST
