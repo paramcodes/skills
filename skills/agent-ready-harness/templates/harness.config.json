@@ -1,0 +1,208 @@
+{
+  "packageManager": "{{PM}}",
+  "commands": {
+    "exec": "{{PM_EXEC}}"
+  },
+  "minimumCriteria": 10,
+  "agents": {
+    "file": "AGENTS.md",
+    "entryPoint": "CLAUDE.md",
+    "maxLines": 100
+  },
+  "layers": {
+    "data": {
+      "alias": "@/db",
+      "dir": "src/db"
+    },
+    "restricted": [
+      { "name": "domain", "files": ["src/domain/**/*.ts"] },
+      {
+        "name": "components",
+        "files": ["src/components/**/*.ts", "src/components/**/*.tsx"]
+      },
+      { "name": "pages", "files": ["src/app/**/page.tsx"] }
+    ]
+  },
+  "dataAccess": {
+    "dir": "src/db",
+    "actorPattern": "\\b(userId|ownerId|viewerId|actorId|owner|viewer|user)\\b",
+    "allowlist": "scripts/public-db-functions.txt"
+  },
+  "criteria": [
+    {
+      "id": "boundaries",
+      "why": "the layers that must not reach across a boundary cannot",
+      "check": { "type": "command", "run": "${PM} arch" }
+    },
+    {
+      "id": "data-access",
+      "why": "every function that touches a user's rows takes the actor whose rows it touches",
+      "check": { "type": "actorParams" }
+    },
+    {
+      "id": "proofs",
+      "why": "every guardrail catches the mistake it was made for",
+      "check": { "type": "command", "run": "${PM} prove" }
+    },
+    {
+      "id": "escape-hatches",
+      "why": "inline lint config, ts-expect-error and skipped tests are errors in the source tree",
+      "check": {
+        "type": "fileContains",
+        "path": "eslint.config.mjs",
+        "contains": ["noInlineConfig", "ban-ts-comment", "no-skipped-tests"]
+      }
+    },
+    {
+      "id": "entry-point",
+      "why": "every rule in AGENTS.md names an enforcement path, and that path exists",
+      "check": { "type": "agentsFile" }
+    },
+    {
+      "id": "local-gate",
+      "why": "a broken change fails before it reaches the branch",
+      "check": {
+        "type": "fileContains",
+        "path": "lefthook.yml",
+        "contains": ["pre-commit:", "lint:", "typecheck:", "staged_files"]
+      }
+    },
+    {
+      "id": "ci",
+      "why": "the merge gate runs the canonical commands and scores the harness",
+      "check": {
+        "type": "fileContains",
+        "path": ".github/workflows/ci.yml",
+        "contains": ["harness"]
+      }
+    },
+    {
+      "id": "ratchet",
+      "why": "the procedure that turns a mistake into a permanent check is written down",
+      "check": {
+        "type": "fileContains",
+        "path": "docs/ratchet.md",
+        "contains": ["strongest layer", "proof case", "log row"]
+      }
+    },
+    {
+      "id": "mistake-log",
+      "why": "mistakes are recorded in a shape a reader can scan",
+      "check": {
+        "type": "fileContains",
+        "path": "docs/mistake-log.md",
+        "contains": ["Mistake", "Guardrail"]
+      }
+    },
+    {
+      "id": "verify",
+      "why": "the repository is green on the commands a contributor runs",
+      "check": { "type": "command", "run": "${PM} verify" }
+    }
+  ],
+  "proofs": [
+    {
+      "name": "a domain file imports the data layer",
+      "write": [
+        {
+          "path": "src/domain/__harness_probe.ts",
+          "content": "import { db } from \"${DATA_ALIAS}\";\n\nexport const probe = db;\n"
+        }
+      ],
+      "expect": {
+        "run": "${PM_EXEC} eslint --config eslint.arch.mjs ${PROBE} --max-warnings=0",
+        "exit": "nonzero",
+        "contains": "no-restricted-imports"
+      }
+    },
+    {
+      "name": "a component imports the data layer",
+      "write": [
+        {
+          "path": "src/components/__harness_probe.ts",
+          "content": "import { db } from \"${DATA_ALIAS}\";\n\nexport const probe = db;\n"
+        }
+      ],
+      "expect": {
+        "run": "${PM_EXEC} eslint --config eslint.arch.mjs ${PROBE} --max-warnings=0",
+        "exit": "nonzero",
+        "contains": "no-restricted-imports"
+      }
+    },
+    {
+      "name": "a page imports the data layer",
+      "write": [
+        {
+          "path": "src/app/__harness_probe/page.tsx",
+          "content": "import { db } from \"${DATA_ALIAS}\";\n\nexport default function HarnessProbePage() {\n  return <span>{String(db)}</span>;\n}\n"
+        }
+      ],
+      "expect": {
+        "run": "${PM_EXEC} eslint --config eslint.arch.mjs ${PROBE} --max-warnings=0",
+        "exit": "nonzero",
+        "contains": "no-restricted-imports"
+      }
+    },
+    {
+      "name": "the source tree carries an inline lint config",
+      "write": [
+        {
+          "path": "src/__harness_probe.ts",
+          "content": "export function harnessProbe() {\n  // eslint-disable-next-line no-console\n  console.log(\"this must not reach production\");\n}\n"
+        }
+      ],
+      "expect": {
+        "run": "${PM_EXEC} eslint ${PROBE} --max-warnings=0",
+        "exit": "nonzero",
+        "contains": "no-inline-config"
+      }
+    },
+    {
+      "name": "the source tree carries a ts-expect-error",
+      "write": [
+        {
+          "path": "src/__harness_probe.ts",
+          "content": "export function harnessProbe(value: { count: number }): number {\n  // @ts-expect-error the property does not exist\n  return value.missing;\n}\n"
+        }
+      ],
+      "expect": {
+        "run": "${PM_EXEC} eslint ${PROBE} --max-warnings=0",
+        "exit": "nonzero",
+        "contains": "ban-ts-comment"
+      }
+    },
+    {
+      "name": "the source tree carries a skipped test",
+      "write": [
+        {
+          "path": "src/__harness_probe.test.ts",
+          "content": "import { describe, expect, it } from \"vitest\";\n\ndescribe(\"harness probe\", () => {\n  it.skip(\"never runs\", () => {\n    expect(true).toBe(true);\n  });\n});\n"
+        }
+      ],
+      "expect": {
+        "run": "${PM_EXEC} eslint ${PROBE} --max-warnings=0",
+        "exit": "nonzero",
+        "contains": "no-skipped-tests"
+      }
+    },
+    {
+      "name": "the source tree parses raw JSON",
+      "write": [
+        {
+          "path": "src/__harness_probe.ts",
+          "content": "export function harnessProbe(raw: string) {\n  return JSON.parse(raw);\n}\n"
+        }
+      ],
+      "expect": {
+        "run": "${PM_EXEC} eslint ${PROBE} --max-warnings=0",
+        "exit": "nonzero",
+        "contains": "no-raw-json-parse"
+      }
+    }
+  ],
+  "notes": [
+    "Replace every criterion that does not apply to this stack with one that does, and never delete a criterion.",
+    "Raise minimumCriteria when a criterion is added. Never lower it to make the score pass.",
+    "Adapt the layer paths, the data layer directory, and the actor parameter pattern to this repository."
+  ]
+}

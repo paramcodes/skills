@@ -1,0 +1,16 @@
+# Local fast gate. Runs on every commit so a broken change is caught before it
+# reaches the branch.
+
+pre-commit:
+  parallel: true
+  commands:
+    branch:
+      run: "bash scripts/guard-branch.sh"
+    format-check:
+      glob: "*.{ts,tsx,js,mjs,cjs,json,md,mdx,css,yml,yaml}"
+      run: "@@PM_EXEC@@ prettier --check {staged_files}"
+    lint:
+      glob: "*.{ts,tsx}"
+      run: "@@PM_EXEC@@ eslint --max-warnings=0 {staged_files}"
+    typecheck:
+      run: "@@PM@@ typecheck"

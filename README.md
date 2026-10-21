@@ -20,6 +20,17 @@ sources/
 - **Community skills** are *not* copied here. Each `catalog/*.md` page links to the upstream repo with its install command, so `npx skills update` keeps them fresh.
 - **Personal skills** live in `skills/` and are installed straight from this repo.
 
+### Agent-ready suite
+
+Four skills that work together to make a repo agent-navigable and self-verifying:
+
+| Skill | Role |
+|---|---|
+| `agent-ready-project` | Doctrine — bootstrap a repo so agents can find → understand → change → verify → stop |
+| `agent-ready-codebase` | Audit workflow — harden an existing repo with real guardrails, not more prose |
+| `agent-ready-typescript` | Stack defaults — TypeScript, ESLint, formatting, tests, CI for Node/browser |
+| `agent-ready-harness` | Mechanical layer — scored criteria, guardrail proofs, and a mistake ratchet |
+
 ## Install
 
 ```bash

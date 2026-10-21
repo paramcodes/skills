@@ -36,3 +36,7 @@ npx skills add paramcodes/skills -s <name> -g
 | `productionize` | Productionize a feature |
 | `no-comments` | Encode constraints instead of adding comments |
 | `recall` | Recall from memory |
+| `agent-ready-project` | Bootstrap a repo so agents can navigate, change, and self-verify (pit of success, paved road) |
+| `agent-ready-codebase` | Audit and harden a repo so agents can modify it reliably across harnesses |
+| `agent-ready-typescript` | TypeScript/ESLint/format/test/CI defaults for Node and browser repos |
+| `agent-ready-harness` | Self-verifying harness: scored criteria, guardrail proofs, mistake ratchet |

@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # @@SETUP@@
+
+      - name: Install dependencies
+        run: "@@INSTALL@@"
+
+      - name: Verify
+        run: "@@PM@@ verify"
+
+      - name: Prove the guardrails
+        run: "@@PM@@ prove"
+
+      - name: Score the agent harness
+        run: "@@PM@@ harness"
