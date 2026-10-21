@@ -217,12 +217,25 @@ function tail(text, lines = 6) {
  * state of the files the scorer is about to overwrite, and it lives outside the
  * tree, so a run that was killed outright still leaves a record that the next
  * run restores.
+ *
+ * The journal path and the lock path may be set with `HARNESS_JOURNAL_PATH` and
+ * `HARNESS_LOCK_PATH`, so a run that drives another run of the scorer does not
+ * fight with it over the tree.
  */
 const treeHash = createHash("sha256").update(root).digest("hex").slice(0, 12);
-const journalPath = path.join(
-  os.tmpdir(),
-  `harness-scorer-journal-${treeHash}.json`,
-);
+
+function treePath(kind) {
+  const override = process.env[`HARNESS_${kind}_PATH`];
+  if (override) {
+    return path.isAbsolute(override) ? override : path.join(root, override);
+  }
+  return path.join(
+    os.tmpdir(),
+    `harness-scorer-${kind}-${treeHash}.${kind === "lock" ? "lock" : "json"}`,
+  );
+}
+
+const journalPath = treePath("journal");
 
 /**
  * The lock of the run.
@@ -239,7 +252,7 @@ const journalPath = path.join(
  * The lock is not the lock of the prover. The scorer runs the prover, and the
  * two must not wait for each other.
  */
-const lockPath = path.join(os.tmpdir(), `harness-scorer-lock-${treeHash}.lock`);
+const lockPath = treePath("lock");
 
 /** The milliseconds a run waits for the lock before it refuses to run. */
 const lockWaitMs = Number(process.env.HARNESS_LOCK_WAIT_MS ?? 120_000);
@@ -406,10 +419,12 @@ function onSignal(signal) {
 }
 
 /**
- * The run owns the tree before it touches it.
+ * The lock guards the probe, which is the only thing the scorer writes into
+ * the tree. It is not held for the whole run, because a run may drive another
+ * run of the scorer, and the two must not wait for each other.
  *
- * The lock is taken before the stale probes are repaired, so two runs can
- * never repair the same probe at the same time.
+ * The stale probes are repaired under the lock, so two runs can never repair
+ * the same probe at the same time.
  */
 if (!acquireLock()) {
   console.error(
@@ -417,8 +432,8 @@ if (!acquireLock()) {
   );
   process.exit(1);
 }
-
 recoverStaleProbes();
+releaseLock();
 
 for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
   process.on(signal, () => onSignal(signal));
@@ -817,6 +832,13 @@ const checks = {
       const existed = existsSync(target);
       const content = existed ? readFileSync(target, "utf8") : null;
 
+      if (!acquireLock()) {
+        problems.push(
+          `${probe.name}: another run holds the lock of this tree and did not finish within ${lockWaitMs} ms`,
+        );
+        continue;
+      }
+
       pendingFiles.push({ path: target, existed, content });
       writeJournal();
 
@@ -843,6 +865,7 @@ const checks = {
         }
       } finally {
         restoreTree();
+        releaseLock();
       }
     }
 
